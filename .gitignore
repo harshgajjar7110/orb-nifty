@@ -1,0 +1,36 @@
+# Environment & Secret Credentials
+.env
+.env.local
+
+# Python Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# Python Bytecode & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data Files & Binary Parquet / CSV Datasets
+data/*.parquet
+data/*.csv
+*.parquet
+60d_backtest_results.csv
+
+# Compiled Binary Wheels & Packages
+*.whl
+
+# IDE & Antigravity Log Directories
+.system_generated/
+.idea/
+.vscode/
+*.log
+
+# Operating System Files
+.DS_Store
+Thumbs.db

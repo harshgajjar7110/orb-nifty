@@ -1,0 +1,107 @@
+# Configuration for Chrome DevTools MCP Web Scraping & DOM Data Extraction Targets
+
+version: "1.0"
+
+targets:
+  nse_option_chain:
+    name: "NSE India Option Chain"
+    url: "https://www.nseindia.com/option-chain"
+    wait_selector: "#optionChainTable"
+    timeout_ms: 10000
+    selectors:
+      table: "#optionChainTable table"
+      spot_price: "#underlyingValue"
+      timestamp: "#asOn"
+    api_intercept_pattern: "api/option-chain-indices"
+    js_extractor: |
+      (() => {
+        const spotElem = document.querySelector('#underlyingValue');
+        const spotPrice = spotElem ? parseFloat(spotElem.innerText.replace(/[^0-9.]/g, '')) : null;
+        
+        const rows = Array.from(document.querySelectorAll('#optionChainTable table tbody tr'));
+        const data = rows.map(r => {
+          const cols = Array.from(r.querySelectorAll('td')).map(c => c.innerText.trim());
+          if (cols.length < 20) return null;
+          return {
+            call_oi: parseFloat(cols[1].replace(/,/g, '')) || 0,
+            call_iv: parseFloat(cols[4].replace(/,/g, '')) || 0,
+            call_ltp: parseFloat(cols[5].replace(/,/g, '')) || 0,
+            strike: parseFloat(cols[11].replace(/,/g, '')) || 0,
+            put_ltp: parseFloat(cols[17].replace(/,/g, '')) || 0,
+            put_iv: parseFloat(cols[18].replace(/,/g, '')) || 0,
+            put_oi: parseFloat(cols[21].replace(/,/g, '')) || 0
+          };
+        }).filter(Boolean);
+        
+        return { spot_price: spotPrice, option_chain: data };
+      })()
+
+  tradingview_nifty:
+    name: "TradingView NIFTY 50 Index"
+    url: "https://in.tradingview.com/chart/?symbol=NSE%3ANIFTY"
+    wait_selector: ".js-symbol-last"
+    timeout_ms: 8000
+    selectors:
+      spot_price: ".js-symbol-last"
+      price_change: ".js-symbol-change"
+    js_extractor: |
+      (() => {
+        const priceElem = document.querySelector('.js-symbol-last');
+        const changeElem = document.querySelector('.js-symbol-change');
+        return {
+          spot_price: priceElem ? parseFloat(priceElem.innerText.replace(/,/g, '')) : null,
+          change: changeElem ? parseFloat(changeElem.innerText) : 0.0,
+          timestamp: new Date().toISOString()
+        };
+      })()
+
+  dhan_option_chain:
+    name: "Dhan Option Chain"
+    url: "https://web.dhan.co/option-chain"
+    wait_selector: "table, .option-chain-table, [data-testid='option-chain-table']"
+    timeout_ms: 15000
+    selectors:
+      table: "table"
+      spot_price: ".spot-price, .underlying-value, [data-testid='spot-price']"
+    js_extractor: |
+      (() => {
+        const spotElem = document.querySelector('.spot-price, .underlying-value, [data-testid="spot-price"]');
+        const spotPrice = spotElem ? parseFloat(spotElem.innerText.replace(/[^0-9.]/g, '')) : null;
+
+        const tables = Array.from(document.querySelectorAll('table'));
+        let chainTable = tables.find(t => {
+          const text = t.innerText || '';
+          return /strike|call|put|oi|iv/i.test(text) && t.querySelectorAll('tr').length > 5;
+        });
+        if (!chainTable) return { spot_price: spotPrice, option_chain: [], timestamp: new Date().toISOString() };
+
+        const rows = Array.from(chainTable.querySelectorAll('tbody tr'));
+        const data = rows.map(r => {
+          const cols = Array.from(r.querySelectorAll('td')).map(c => c.innerText.trim().replace(/,/g, ''));
+          if (cols.length < 7) return null;
+          return {
+            strike: parseFloat(cols[0]) || 0,
+            call_ltp: parseFloat(cols[1]) || 0,
+            call_iv: parseFloat(cols[2]) || 0,
+            call_oi: parseFloat(cols[3]) || 0,
+            put_ltp: parseFloat(cols[4]) || 0,
+            put_iv: parseFloat(cols[5]) || 0,
+            put_oi: parseFloat(cols[6]) || 0
+          };
+        }).filter(Boolean);
+
+        return { spot_price: spotPrice, option_chain: data, timestamp: new Date().toISOString() };
+      })()
+
+  generic_table_scraper:
+    name: "Generic Table Scraper"
+    js_extractor: |
+      ((selector) => {
+        const table = document.querySelector(selector);
+        if (!table) return null;
+        const headers = Array.from(table.querySelectorAll('th')).map(th => th.innerText.trim());
+        const rows = Array.from(table.querySelectorAll('tr')).map(tr => {
+          return Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
+        }).filter(r => r.length > 0);
+        return { headers, rows };
+      })

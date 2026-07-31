@@ -1,0 +1,63 @@
+# WebBridge extraction targets for OSSE.
+# These definitions tell the WebBridgeCollector how to navigate and what to
+# read from a given Dhan web page.
+
+version: "1.0"
+
+targets:
+  dhan_dext_dashboard:
+    name: "Dhan Dext Dashboard"
+    url_pattern: "https://dext.dhan.co/dashboard"
+    group_title: "OSSE Dhan Exposure"
+    widget_tabs:
+      delta: "Delta Exposure"
+      gamma: "Gamma Exposure"
+    # Labels that appear in the accessibility tree / DOM for key metrics.
+    metric_labels:
+      spot_prefix: "Nifty 50"   # label immediately before spot price
+      atm_iv: "ATM IV:"
+      atm_iv_chg: "ATM IV Chg%:"
+      pcr: "PCR:"
+      market_lot: "Market Lot:"
+      days_to_expiry: "Days to Expiry:"
+      max_pain: "Max Pain:"
+      total_call: "Total Call:"
+      total_put: "Total Put:"
+      total_net: "Total Net:"
+      dex_ratio: "DEX Ratio:"
+      gex_ratio: "GEX Ratio:"
+    # Key level labels (the strike and exposure values follow them in the tree).
+    level_labels:
+      delta:
+        peak_neg: "Peak -Delta exp"
+        call_resistance: "Call Resistance"
+        delta_flip: "Delta Flip"
+        put_support: "Put Support"
+        peak_pos: "Peak +Delta exp"
+      gamma:
+        peak_neg: "Peak -Gamma exp"
+        put_support: "Put Support"
+        gamma_flip: "Gamma Flip"
+        call_resistance: "Call Resistance"
+        peak_pos: "Peak +Gamma exp"
+    # JavaScript helpers used when the accessibility tree is insufficient.
+    js_extractors:
+      spot_price: |
+        (() => {
+          // Try to find the spot price near the index name.
+          const els = Array.from(document.querySelectorAll('*'));
+          for (let i = 0; i < els.length; i++) {
+            const txt = els[i].textContent || '';
+            if (/Nifty 50|BANKNIFTY|FINNIFTY|SENSEX/i.test(txt)) {
+              // look at next few siblings / children for a numeric value
+              let node = els[i].parentElement;
+              if (node) {
+                const match = node.textContent.match(/([0-9,]+\.\d{2})/);
+                if (match) return parseFloat(match[1].replace(/,/g, ''));
+              }
+            }
+          }
+          return null;
+        })()
+      page_text: |
+        (() => document.body.innerText)()

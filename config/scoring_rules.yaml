@@ -1,0 +1,105 @@
+features:
+  relative_volume:
+    weight: 20
+    normalization: bounded
+    min_val: 0.8
+    max_val: 2.5
+
+  adx:
+    weight: 15
+    normalization: bounded
+    min_val: 10.0
+    max_val: 40.0
+
+  atr_expansion:
+    weight: 10
+    normalization: bounded
+    min_val: 0.2
+    max_val: 1.5
+
+  vwap_distance:
+    weight: 15
+    normalization: bounded
+    min_val: 0.0
+    max_val: 0.4
+
+  orb_width:
+    weight: 15
+    normalization: bounded
+    min_val: 0.1
+    max_val: 0.6
+
+  ema_alignment:
+    weight: 10
+    normalization: bounded
+    min_val: 0.0
+    max_val: 1.0
+
+  gap_percent:
+    weight: 5
+    normalization: bounded
+    min_val: 0.0
+    max_val: 1.0
+
+  candle_efficiency:
+    weight: 5
+    normalization: bounded
+    min_val: 0.0
+    max_val: 0.8
+    
+  trend_consistency:
+    weight: 5
+    normalization: bounded
+    min_val: 0.0
+    max_val: 0.5
+    
+  opening_momentum:
+    weight: 10
+    normalization: bounded
+    min_val: 0.0
+    max_val: 0.5
+
+  htf_alignment:
+    weight: 15
+    normalization: bounded
+    min_val: 0.0
+    max_val: 1.0
+
+  iv_rank:
+    weight: 10
+    normalization: bounded
+    min_val: 10.0
+    max_val: 80.0
+
+  cpr_width:
+    weight: 5
+    normalization: bounded
+    min_val: 0.6
+    max_val: 0.05
+
+confluence_weights:
+  dex_wall_at_vp_boundary: 40
+  poc_near_dex_flip: 30
+  vah_val_near_dex: 20
+  volume_confirmation: 10
+
+unified_score_weights:
+  osse_score_weight: 0.40
+  confluence_score_weight: 0.60
+
+regimes:
+  TRENDING:
+    adx:
+      weight: 20
+    vwap_distance:
+      weight: 10
+  RANGING:
+    adx:
+      weight: 5
+    vwap_distance:
+      weight: 20
+  GAP:
+    gap_percent:
+      weight: 15
+    orb_width:
+      weight: 10
