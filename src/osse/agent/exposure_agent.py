@@ -4,29 +4,25 @@ Dhan Exposure Agent for OSSE.
 Orchestrates the end-to-end flow:
   1. Navigate to a user-supplied Dhan Dext URL via Kimi WebBridge.
   2. Extract Delta Exposure and Gamma Exposure from the dashboard.
-  3. Compute DEX/GEX metrics and drive the StrikeSelector with the
-     GEX_DEX_ALIGNED variant.
-  4. Return a trade-ready strike recommendation.
+  3. Build DEX/GEX metric dicts directly from the parsed GreeksExposure
+     totals and levels (no secondary option-chain fetch required).
+  4. Drive StrikeSelector with the GEX_DEX_ALIGNED variant and return
+     a trade-ready strike recommendation.
 
-The agent prefers WebBridge (real browser, user's login session) and falls
-back to the existing DhanMCPCollector if the WebBridge daemon is unreachable.
+WebBridge is the only supported collector.  If the daemon is unreachable
+the agent returns an ERROR result immediately.
 """
 
-import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
 
-from osse.data.dhan_mcp import DhanMCPCollector
 from osse.data.greeks_parser import GreeksExposure, GreeksParser
 from osse.data.webbridge_collector import WebBridgeCollector
-from osse.engine.dex_calculator import DEXCalculator
-from osse.engine.gamma_calculator import GammaExposureCalculator
 from osse.options.strike_selector import StrikeSelector
 
 logger = logging.getLogger(__name__)
@@ -47,7 +43,6 @@ class ExposureAgentResult:
     gex_data: Dict[str, Any] = field(default_factory=dict)
     strike_recommendation: Dict[str, Any] = field(default_factory=dict)
     collector_used: str = ""
-    fallback_reason: str = ""
 
     @staticmethod
     def _jsonify(obj: Any) -> Any:
@@ -81,13 +76,14 @@ class ExposureAgentResult:
             "gex_data": self.gex_data,
             "strike_recommendation": self.strike_recommendation,
             "collector_used": self.collector_used,
-            "fallback_reason": self.fallback_reason,
         })
 
 
 class DhanExposureAgent:
     """
     End-to-end agent for Dhan Dext exposure-driven strike selection.
+
+    Requires the Kimi WebBridge daemon to be running.  No MCP fallback.
     """
 
     DEFAULT_DAEMON_URL = "http://127.0.0.1:10086"
@@ -97,17 +93,12 @@ class DhanExposureAgent:
         self,
         daemon_url: Optional[str] = None,
         session: str = "osse-exposure",
-        use_mcp_fallback: bool = True,
     ):
         self.daemon_url = daemon_url or self.DEFAULT_DAEMON_URL
         self.session = session
-        self.use_mcp_fallback = use_mcp_fallback
         self.webbridge = WebBridgeCollector(
             daemon_url=self.daemon_url, session=self.session
         )
-        self.mcp_collector: Optional[DhanMCPCollector] = None
-        if use_mcp_fallback:
-            self.mcp_collector = DhanMCPCollector()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -123,52 +114,51 @@ class DhanExposureAgent:
     ) -> ExposureAgentResult:
         """
         Executes the full exposure-driven strike selection workflow.
+        Returns ERROR immediately if the WebBridge daemon is unreachable.
         """
         result = ExposureAgentResult(url=url, symbol=symbol)
 
-        # 1. Choose collector
-        collector_used, fallback_reason = self._choose_collector()
-        result.collector_used = collector_used
-        result.fallback_reason = fallback_reason
+        # 1. Verify WebBridge daemon is reachable
+        if not self.webbridge.ensure_daemon():
+            result.status = "ERROR"
+            result.reason = (
+                "Kimi WebBridge daemon is not reachable at "
+                f"{self.daemon_url}. Start it with: "
+                "kimi-webbridge start"
+            )
+            return result
 
-        if collector_used == "webbridge":
-            try:
-                delta_ge, gamma_ge = self._fetch_via_webbridge(url, symbol)
-                result.delta_exposure = delta_ge
-                result.gamma_exposure = gamma_ge
-                result.spot_price = delta_ge.spot_price or gamma_ge.spot_price
-            except Exception as e:
-                logger.warning(f"[ExposureAgent] WebBridge fetch failed: {e}")
-                if not self.use_mcp_fallback:
-                    result.status = "ERROR"
-                    result.reason = f"WebBridge fetch failed and fallback disabled: {e}"
-                    return result
-                collector_used = "dhan_mcp"
-                result.collector_used = collector_used
-                result.fallback_reason = f"WebBridge error: {e}"
+        result.collector_used = "webbridge"
 
-        if collector_used == "dhan_mcp":
-            delta_ge, gamma_ge = self._fetch_via_mcp(symbol)
+        # 2. Fetch Delta + Gamma exposure via WebBridge
+        try:
+            delta_ge, gamma_ge = self._fetch_via_webbridge(url, symbol)
             result.delta_exposure = delta_ge
             result.gamma_exposure = gamma_ge
-            result.spot_price = delta_ge.spot_price or gamma_ge.spot_price
+            result.spot_price = (
+                delta_ge.spot_price
+                if delta_ge.spot_price and delta_ge.spot_price > 0
+                else gamma_ge.spot_price
+            )
+        except Exception as e:
+            logger.error(f"[ExposureAgent] WebBridge fetch failed: {e}")
+            result.status = "ERROR"
+            result.reason = f"WebBridge fetch failed: {e}"
+            return result
 
-        if result.spot_price is None or result.spot_price <= 0:
+        if not result.spot_price or result.spot_price <= 0:
             result.status = "ERROR"
             result.reason = "Could not determine spot price from exposure data."
             return result
 
-        # 2. Compute DEX / GEX
-        result.dex_data = self._compute_dex(symbol, result.spot_price)
-        result.gex_data = self._compute_gex(symbol, result.spot_price)
+        # 3. Build DEX / GEX dicts directly from parsed GreeksExposure
+        result.dex_data = self._build_dex_dict(delta_ge)
+        result.gex_data = self._build_gex_dict(gamma_ge)
 
-        # 3. Override DEX/GEX key levels with scraped parser levels when available
-        self._merge_parser_levels(result)
-
-        # 4. Generate strike recommendation
+        # 4. Fetch option chain for leg pricing, then run strike selection
         try:
-            selector = StrikeSelector()
             chain = self._get_option_chain(symbol, result.spot_price)
+            selector = StrikeSelector()
             rec = selector.select_strikes(
                 strategy_name=strategy_name,
                 spot_price=result.spot_price,
@@ -190,18 +180,7 @@ class DhanExposureAgent:
         return result
 
     # ------------------------------------------------------------------
-    # Collector selection
-    # ------------------------------------------------------------------
-    def _choose_collector(self) -> tuple:
-        """Returns (collector_name, fallback_reason)."""
-        if self.webbridge.ensure_daemon():
-            return "webbridge", ""
-        if not self.use_mcp_fallback:
-            return "webbridge", "WebBridge daemon unreachable; fallback disabled"
-        return "dhan_mcp", "WebBridge daemon unreachable; using DhanMCPCollector fallback"
-
-    # ------------------------------------------------------------------
-    # WebBridge path
+    # WebBridge fetch
     # ------------------------------------------------------------------
     def _fetch_via_webbridge(
         self, url: str, symbol: str
@@ -235,125 +214,61 @@ class DhanExposureAgent:
         return delta_ge, gamma_ge
 
     # ------------------------------------------------------------------
-    # MCP fallback path
+    # DEX / GEX dict builders (from parsed GreeksExposure)
     # ------------------------------------------------------------------
-    def _fetch_via_mcp(self, symbol: str) -> tuple[GreeksExposure, GreeksExposure]:
-        """Builds GreeksExposure objects from the DhanMCPCollector option chain."""
-        if self.mcp_collector is None:
-            raise RuntimeError("DhanMCPCollector fallback not initialized")
+    def _build_dex_dict(self, ge: GreeksExposure) -> Dict[str, Any]:
+        """
+        Builds a DEX metrics dict directly from a parsed GreeksExposure
+        object.  No secondary option-chain computation required.
+        """
+        levels = ge.levels or {}
+        return {
+            "status": "SUCCESS",
+            "total_call_dex": ge.total_call,
+            "total_put_dex": ge.total_put,
+            "total_net_dex": ge.total_net,
+            "dex_ratio": ge.ratio,
+            "call_wall": (levels.get("call_resistance") or {}).get("strike"),
+            "put_support": (levels.get("put_support") or {}).get("strike"),
+            "delta_flip": (levels.get("flip") or {}).get("strike"),
+        }
 
-        chain_df = self.mcp_collector.fetch_option_chain(symbol=symbol)
-        spot = chain_df["strike_price"].median() if not chain_df.empty else 0.0
-
-        delta_ge = GreeksExposure(exposure_type="delta", symbol=symbol, spot_price=spot)
-        gamma_ge = GreeksExposure(exposure_type="gamma", symbol=symbol, spot_price=spot)
-
-        if chain_df.empty:
-            return delta_ge, gamma_ge
-
-        dex_calc = DEXCalculator()
-        gex_calc = GammaExposureCalculator()
-        dex_res = dex_calc.calculate_dex(chain_df, spot_price=spot)
-        gex_res = gex_calc.calculate_gex(chain_df, spot_price=spot)
-
-        if dex_res.get("status") == "SUCCESS":
-            delta_ge.total_call = dex_res.get("total_call_dex")
-            delta_ge.total_put = dex_res.get("total_put_dex")
-            delta_ge.total_net = dex_res.get("total_net_dex")
-            delta_ge.ratio = dex_res.get("dex_ratio")
-            delta_ge.levels = {
-                "call_resistance": {"strike": dex_res.get("call_wall")},
-                "put_support": {"strike": dex_res.get("put_support")},
-                "flip": {"strike": dex_res.get("delta_flip")},
-            }
-
-        if gex_res.get("status") == "SUCCESS":
-            gamma_ge.total_call = gex_res.get("total_call_gex")
-            gamma_ge.total_put = gex_res.get("total_put_gex")
-            gamma_ge.total_net = gex_res.get("total_net_gex")
-            gamma_ge.levels = {
-                "peak_positive": {"strike": gex_res.get("peak_pos_gamma_strike")},
-                "peak_negative": {"strike": gex_res.get("peak_neg_gamma_strike")},
-                "flip": {"strike": gex_res.get("gamma_flip")},
-            }
-
-        return delta_ge, gamma_ge
+    def _build_gex_dict(self, ge: GreeksExposure) -> Dict[str, Any]:
+        """
+        Builds a GEX metrics dict directly from a parsed GreeksExposure
+        object.  No secondary option-chain computation required.
+        """
+        levels = ge.levels or {}
+        return {
+            "status": "SUCCESS",
+            "total_call_gex": ge.total_call,
+            "total_put_gex": ge.total_put,
+            "total_net_gex": ge.total_net,
+            "peak_pos_gamma_strike": (levels.get("peak_positive") or {}).get("strike"),
+            "peak_neg_gamma_strike": (levels.get("peak_negative") or {}).get("strike"),
+            "gamma_flip": (levels.get("flip") or {}).get("strike"),
+        }
 
     # ------------------------------------------------------------------
-    # Metric computation
+    # Option chain for leg pricing
     # ------------------------------------------------------------------
-    def _compute_dex(self, symbol: str, spot_price: float) -> Dict[str, Any]:
-        """Computes DEX from the option chain."""
-        chain_df = self._get_chain_df(symbol, spot_price)
-        return DEXCalculator().calculate_dex(chain_df, spot_price=spot_price)
-
-    def _compute_gex(self, symbol: str, spot_price: float) -> Dict[str, Any]:
-        """Computes GEX from the option chain."""
-        chain_df = self._get_chain_df(symbol, spot_price)
-        return GammaExposureCalculator().calculate_gex(chain_df, spot_price=spot_price)
-
-    def _get_chain_df(self, symbol: str, spot_price: float) -> pd.DataFrame:
-        """Returns a DataFrame option chain, preferring MCP data."""
-        if self.mcp_collector is not None:
-            try:
-                return self.mcp_collector.fetch_option_chain(symbol=symbol)
-            except Exception as e:
-                logger.warning(f"[ExposureAgent] MCP chain fetch failed: {e}")
-        # Fallback to synthetic chain
-        from osse.data.collector import DataCollector
-
-        chain = DataCollector.generate_synthetic_option_chain(
-            spot_price, symbol, vix=15.0, strike_depth=20
-        )
-        rows = []
-        for item in chain.get("chain", []):
-            rows.append(
-                {
-                    "strike_price": item["strike"],
-                    "ce_oi": item["ce"].get("oi", 0),
-                    "ce_delta": item["ce"].get("delta", 0.0),
-                    "ce_gamma": item["ce"].get("gamma", 0.0),
-                    "pe_oi": item["pe"].get("oi", 0),
-                    "pe_delta": item["pe"].get("delta", 0.0),
-                    "pe_gamma": item["pe"].get("gamma", 0.0),
-                }
-            )
-        return pd.DataFrame(rows)
-
     def _get_option_chain(self, symbol: str, spot_price: float) -> Dict[str, Any]:
-        """Returns the dict-style option chain used by StrikeSelector."""
-        # StrikeSelector consumes a chain dict.  We generate a synthetic chain
-        # around the scraped spot price; exposure levels (DEX/GEX) drive the
-        # final strike selection regardless of whether the chain is live.
+        """
+        Returns the dict-style option chain consumed by StrikeSelector.
+        Uses DataCollector (Dhan API → yfinance → synthetic BS) so the
+        selector always has real or synthetic premiums for leg pricing.
+        Exposure levels (DEX/GEX) drive strike placement regardless of
+        whether the chain is live.
+        """
         from osse.data.collector import DataCollector
+
+        try:
+            chain = DataCollector.fetch_option_chain(symbol=symbol)
+            if chain and chain.get("chain"):
+                return chain
+        except Exception as e:
+            logger.warning(f"[ExposureAgent] Live chain fetch failed: {e}; using synthetic.")
 
         return DataCollector.generate_synthetic_option_chain(
             spot_price, symbol, vix=15.0, strike_depth=20
         )
-
-    # ------------------------------------------------------------------
-    # Level merging
-    # ------------------------------------------------------------------
-    def _merge_parser_levels(self, result: ExposureAgentResult) -> None:
-        """Overwrites computed DEX/GEX levels with parsed dashboard levels."""
-        if result.delta_exposure and result.delta_exposure.levels:
-            levels = result.delta_exposure.levels
-            if "call_resistance" in levels:
-                result.dex_data["call_wall"] = levels["call_resistance"].get("strike")
-            if "put_support" in levels:
-                result.dex_data["put_support"] = levels["put_support"].get("strike")
-            if "flip" in levels:
-                result.dex_data["delta_flip"] = levels["flip"].get("strike")
-
-        if result.gamma_exposure and result.gamma_exposure.levels:
-            levels = result.gamma_exposure.levels
-            if "peak_positive" in levels:
-                result.gex_data["peak_pos_gamma_strike"] = levels["peak_positive"].get(
-                    "strike"
-                )
-            if "peak_negative" in levels:
-                result.gex_data["peak_neg_gamma_strike"] = levels["peak_negative"].get(
-                    "strike"
-                )
-            if "flip" in levels:
-                result.gex_data["gamma_flip"] = levels["flip"].get("strike")

@@ -118,6 +118,17 @@ def test_strike_selector_with_expiry():
     assert len(res["legs"]) == 2
 
 def test_strike_selector_gex_dex_aligned_variant():
+    """
+    UP direction, spot=24500, NIFTY step=50.
+    Priority order (from config): put_support(24350), delta_flip(24450),
+    gamma_flip(24450), peak_neg_gamma_strike(24350).
+    Valid candidates = [24350, 24450, 24450, 24350]; anchor = max = 24450.
+    short_k = round(24450/50)*50 = 24450.
+    Ceiling = round((24500 - 1*50)/50)*50 = 24450; 24450 <= 24450 -> no clamp.
+    long_k  = round((24450 - 2*50)/50)*50 = 24350.
+
+    Supplies a pre-built synthetic chain so no network call is made.
+    """
     selector = StrikeSelector()
     dex_data = {
         "call_wall": 24650.0,
@@ -129,9 +140,16 @@ def test_strike_selector_gex_dex_aligned_variant():
         "peak_pos_gamma_strike": 24650.0,
         "peak_neg_gamma_strike": 24350.0,
     }
+
+    # Build an offline chain wide enough to contain both computed strikes
+    chain = DataCollector.generate_synthetic_option_chain(
+        24500.0, "NIFTY", vix=15.0, strike_depth=20
+    )
+
     res = selector.select_strikes(
         strategy_name="Directional Credit Spread",
         spot_price=24500.0,
+        option_chain=chain,
         symbol="NIFTY",
         variant="GEX_DEX_ALIGNED",
         direction="UP",
@@ -139,11 +157,27 @@ def test_strike_selector_gex_dex_aligned_variant():
         gex_data=gex_data,
     )
     assert res["variant_used"] == "GEX_DEX_ALIGNED"
-    assert len(res["legs"]) == 2
-    assert res["legs"][0]["action"] == "SELL"
-    assert res["legs"][0]["option_type"] == "PE"
-    assert res["legs"][0]["strike"] < 24500.0
-    assert res["legs"][1]["strike"] < res["legs"][0]["strike"]
+    legs = res["legs"]
+    assert len(legs) == 2
+
+    short_leg, long_leg = legs[0], legs[1]
+
+    # Actions and option types
+    assert short_leg["action"] == "SELL"
+    assert short_leg["option_type"] == "PE"
+    assert long_leg["action"] == "BUY"
+    assert long_leg["option_type"] == "PE"
+
+    # Exact rounded strikes
+    assert short_leg["strike"] == 24450.0, f"Expected 24450.0, got {short_leg['strike']}"
+    assert long_leg["strike"] == 24350.0, f"Expected 24350.0, got {long_leg['strike']}"
+
+    # Both strikes must be multiples of the NIFTY step size
+    assert short_leg["strike"] % 50 == 0
+    assert long_leg["strike"] % 50 == 0
+
+    # Long leg must be below short leg
+    assert long_leg["strike"] < short_leg["strike"]
 
 
 def test_decision_engine_with_strike_recommendation():

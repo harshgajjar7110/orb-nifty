@@ -1,11 +1,14 @@
 """
 CLI runner for the Dhan Exposure Agent.
 
+Requires the Kimi WebBridge daemon to be running:
+    kimi-webbridge start
+
 Example:
-    .venv_py314/bin/python scripts/run_exposure_agent.py \
-        --url "https://dext.dhan.co/dashboard" \
-        --symbol NIFTY \
-        --direction UP \
+    python scripts/run_exposure_agent.py \\
+        --url "https://dext.dhan.co/dashboard" \\
+        --symbol NIFTY \\
+        --direction UP \\
         --strategy "Directional Credit Spread"
 """
 
@@ -48,20 +51,12 @@ def main():
         help="Kimi WebBridge daemon URL",
     )
     parser.add_argument(
-        "--no-mcp-fallback",
-        action="store_true",
-        help="Disable DhanMCPCollector fallback if WebBridge is unreachable",
-    )
-    parser.add_argument(
         "--output", default=None, help="Optional JSON file to write the result to"
     )
 
     args = parser.parse_args()
 
-    agent = DhanExposureAgent(
-        daemon_url=args.daemon_url,
-        use_mcp_fallback=not args.no_mcp_fallback,
-    )
+    agent = DhanExposureAgent(daemon_url=args.daemon_url)
     result = agent.run(
         url=args.url,
         strategy_name=args.strategy,

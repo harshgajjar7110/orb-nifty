@@ -29,7 +29,7 @@ The OSSE engine evaluates intraday 1-minute market structure against 13 statisti
 - **Chrome DevTools Collector (`chrome_collector.py`):** Directly drives Chrome via the DevTools Protocol (`chrome-devtools-mcp`) to extract live portfolio, option chain, and chart candle data from the Dhan web app.
 - **DOM Parser (`dom_parser.py`):** Parses raw HTML snapshots from the Dhan Dext page into structured DataFrames.
 - **Greeks Parser (`greeks_parser.py`):** Extracts per-strike Delta, Gamma, Theta, Vega, and IV from option chain snapshots.
-- **DhanMCP Collector (`dhan_mcp.py`):** Playwright/Node.js backed collector using saved auth sessions (JSON storage state) — falls back from WebBridge when the daemon is unavailable.
+- **DhanMCP Collector (`dhan_mcp.py`):** Playwright/Node.js backed collector using saved auth sessions (JSON storage state) — used independently for historical data tasks, not as a fallback in the Exposure Agent.
 
 ### Options Analytics
 - **Black-Scholes Synthetic Pricing (`synthetic_pricing.py`):** Computes theoretical option prices and Greeks (Delta, Gamma, Vega, Theta) using `scipy`.
@@ -275,7 +275,7 @@ Returns a natural-language AI reasoning narrative for the current market setup.
 ---
 
 ### `POST /api/v1/exposure-strikes`
-Navigates to the Dhan Dext dashboard via WebBridge, extracts live DEX/GEX, and returns GEX/DEX-aligned strike recommendations.
+Navigates to the supplied Dhan Dext URL via WebBridge, extracts live DEX/GEX, and returns GEX/DEX-aligned strike recommendations. Returns `ERROR` if the WebBridge daemon is unreachable.
 
 **Request:**
 ```json
@@ -319,6 +319,9 @@ Fetch live DEX/GEX from Dhan Dext and output GEX/DEX-aligned strikes from the co
 kimi-webbridge start
 ```
 
+> [!IMPORTANT]
+> WebBridge is the only supported collector. If the daemon is unreachable the agent returns an `ERROR` result immediately.
+
 ```bash
 python scripts/run_exposure_agent.py \
   --url "https://dext.dhan.co/dashboard" \
@@ -339,7 +342,6 @@ python scripts/run_exposure_agent.py \
 | `--variant` | `GEX_DEX_ALIGNED` | Strike selection variant |
 | `--expiry` | `WEEKLY` | `WEEKLY`, `NEXT_WEEKLY`, `MONTHLY` |
 | `--daemon-url` | `http://127.0.0.1:10086` | Kimi WebBridge daemon URL |
-| `--no-mcp-fallback` | — | Disable DhanMCPCollector fallback |
 | `--output` | — | JSON file to write result to |
 
 ---

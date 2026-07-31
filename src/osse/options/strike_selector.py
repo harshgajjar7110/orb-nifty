@@ -391,11 +391,20 @@ class StrikeSelector:
         direction: str = "UP",
         dex_data: Optional[dict] = None,
         gex_data: Optional[dict] = None,
-    ) -> dict:
+    ) -> list:
         """
         Selects strikes by aligning with Delta/Gamma exposure levels scraped
-        from Dhan Dext.  Short legs are placed just inside dealer support /
-        resistance zones; long legs are the standard 2-step OTM hedge.
+        from Dhan Dext.
+
+        Priority lists are read from strike_rules.yaml
+        (exposure_driven_rules.up_direction_priority /
+        down_direction_priority).  The first valid candidate in that list
+        becomes the anchor; UP uses max(valid), DOWN uses min(valid).
+        Both strikes are rounded to the symbol step_size after the
+        min_otm_steps constraint is enforced.
+
+        Raises ValueError if either computed strike is absent from the
+        supplied option chain.
         """
         meta = self._get_symbol_metadata(symbol)
         step = meta.get("step_size", 50)
@@ -406,82 +415,87 @@ class StrikeSelector:
         min_otm_steps = exposure_rules.get("min_otm_steps", 1)
         hedge_mult = exposure_rules.get("hedge_step_multiplier", 2)
 
-        # UP = Bullish / Put Credit Spread -> short PE at support.
+        # Map config key names to the correct data dict
+        _level_map = {
+            "put_support": dex.get("put_support"),
+            "delta_flip": dex.get("delta_flip"),
+            "call_wall": dex.get("call_wall"),
+            "gamma_flip": gex.get("gamma_flip"),
+            "peak_neg_gamma_strike": gex.get("peak_neg_gamma_strike"),
+            "peak_pos_gamma_strike": gex.get("peak_pos_gamma_strike"),
+        }
+
         if direction.upper() == "UP":
-            candidates = [
-                dex.get("put_support"),
-                dex.get("delta_flip"),
-                gex.get("gamma_flip"),
-                gex.get("peak_neg_gamma_strike"),
+            # Bullish / Put Credit Spread — short PE at the strongest support.
+            priority: list = exposure_rules.get(
+                "up_direction_priority",
+                ["put_support", "delta_flip", "gamma_flip", "peak_neg_gamma_strike"],
+            )
+            valid = [
+                _level_map[k]
+                for k in priority
+                if k in _level_map
+                and isinstance(_level_map[k], (int, float))
+                and _level_map[k] > 0
             ]
-            valid = [c for c in candidates if isinstance(c, (int, float)) and c > 0]
             anchor = max(valid) if valid else round(spot_price / step) * step
             short_k = round(anchor / step) * step
-            # Ensure short PE is at least min_otm_steps below spot.
-            max_support = spot_price - (min_otm_steps * step)
-            if short_k >= max_support:
-                short_k = max_support
-            long_k = short_k - (hedge_mult * step)
+            # Enforce: short PE must be at least min_otm_steps below spot.
+            ceiling = round((spot_price - min_otm_steps * step) / step) * step
+            if short_k > ceiling:
+                short_k = ceiling
+            long_k = round((short_k - hedge_mult * step) / step) * step
             opt_type = "PE"
-            action = "SELL"
-            hedge_action = "BUY"
+            sell_action, buy_action = "SELL", "BUY"
         else:
-            # DOWN = Bearish / Call Credit Spread -> short CE at resistance.
-            candidates = [
-                dex.get("call_wall"),
-                gex.get("peak_pos_gamma_strike"),
-                dex.get("delta_flip"),
-                gex.get("gamma_flip"),
+            # Bearish / Call Credit Spread — short CE at the strongest resistance.
+            priority = exposure_rules.get(
+                "down_direction_priority",
+                ["call_wall", "peak_pos_gamma_strike", "delta_flip", "gamma_flip"],
+            )
+            valid = [
+                _level_map[k]
+                for k in priority
+                if k in _level_map
+                and isinstance(_level_map[k], (int, float))
+                and _level_map[k] > 0
             ]
-            valid = [c for c in candidates if isinstance(c, (int, float)) and c > 0]
             anchor = min(valid) if valid else round(spot_price / step) * step
             short_k = round(anchor / step) * step
-            # Ensure short CE is at least min_otm_steps above spot.
-            min_resistance = spot_price + (min_otm_steps * step)
-            if short_k <= min_resistance:
-                short_k = min_resistance
-            long_k = short_k + (hedge_mult * step)
+            # Enforce: short CE must be at least min_otm_steps above spot.
+            floor_ = round((spot_price + min_otm_steps * step) / step) * step
+            if short_k < floor_:
+                short_k = floor_
+            long_k = round((short_k + hedge_mult * step) / step) * step
             opt_type = "CE"
-            action = "SELL"
-            hedge_action = "BUY"
+            sell_action, buy_action = "SELL", "BUY"
 
         chain_map = {item["strike"]: item for item in chain_data.get("chain", [])}
 
-        def make_leg(strike: float, act: str):
-            if strike in chain_map:
-                opt = chain_map[strike][opt_type.lower()]
-                return {
-                    "action": act,
-                    "option_type": opt_type.upper(),
-                    "strike": float(strike),
-                    "ltp": opt.get("ltp", 0.0),
-                    "delta": opt.get("delta", 0.0),
-                    "theta": opt.get("theta", 0.0),
-                    "gamma": opt.get("gamma", 0.0),
-                    "vega": opt.get("vega", 0.0),
-                    "iv": opt.get("iv", 0.0),
-                    "oi": opt.get("oi", 0),
-                    "security_id": opt.get("security_id", 0),
-                    "source": chain_data.get("data_source", "dhan_live_feed"),
-                }
-            from osse.options.synthetic_pricing import BlackScholesEngine
-            price = BlackScholesEngine.price_option(
-                spot_price, strike, T=4.0 / 365.0, sigma=0.15, option_type=opt_type
-            )
-            delta = BlackScholesEngine.calculate_delta(
-                spot_price, strike, T=4.0 / 365.0, sigma=0.15, option_type=opt_type
-            )
+        def make_leg(strike: float, act: str) -> dict:
+            if strike not in chain_map:
+                raise ValueError(
+                    f"GEX_DEX_ALIGNED: strike {strike} ({opt_type}) is not present "
+                    f"in the supplied option chain for {symbol}. "
+                    "Widen the chain depth or verify the exposure levels."
+                )
+            opt = chain_map[strike][opt_type.lower()]
             return {
                 "action": act,
                 "option_type": opt_type.upper(),
                 "strike": float(strike),
-                "ltp": round(price, 2),
-                "delta": round(delta, 3),
-                "oi": 0,
-                "source": "synthetic_bs_engine",
+                "ltp": opt.get("ltp", 0.0),
+                "delta": opt.get("delta", 0.0),
+                "theta": opt.get("theta", 0.0),
+                "gamma": opt.get("gamma", 0.0),
+                "vega": opt.get("vega", 0.0),
+                "iv": opt.get("iv", 0.0),
+                "oi": opt.get("oi", 0),
+                "security_id": opt.get("security_id", 0),
+                "source": chain_data.get("data_source", "dhan_live_feed"),
             }
 
-        return [make_leg(short_k, action), make_leg(long_k, hedge_action)]
+        return [make_leg(short_k, sell_action), make_leg(long_k, buy_action)]
 
     # ----------------------------------------------------
     # MASTER ENTRYPOINT

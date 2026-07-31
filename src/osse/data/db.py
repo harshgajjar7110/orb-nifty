@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import Optional
 import pandas as pd
 from datetime import datetime
 

@@ -29,12 +29,12 @@ def gamma_snapshot():
 
 
 def test_exposure_agent_webbridge_path(delta_snapshot, gamma_snapshot):
+    """WebBridge happy path: agent succeeds and returns GEX_DEX_ALIGNED strikes."""
     from osse.data.webbridge_collector import WebBridgeCollector
+    from osse.data.collector import DataCollector
 
-    agent = DhanExposureAgent(daemon_url="http://127.0.0.1:1", use_mcp_fallback=False)
+    agent = DhanExposureAgent(daemon_url="http://127.0.0.1:1")
 
-    # Use a real WebBridgeCollector for text flattening, but mock the daemon
-    # interaction methods so the test runs offline.
     real_collector = WebBridgeCollector(daemon_url="")
     mock_collector = MagicMock(wraps=real_collector)
     mock_collector.ensure_daemon.return_value = True
@@ -48,7 +48,13 @@ def test_exposure_agent_webbridge_path(delta_snapshot, gamma_snapshot):
 
     mock_collector.snapshot.side_effect = snapshot_side_effect
 
-    with patch.object(agent, "webbridge", mock_collector):
+    # Supply a real synthetic chain so strike selection has valid strikes
+    synthetic_chain = DataCollector.generate_synthetic_option_chain(
+        24416.80, "NIFTY", vix=15.0, strike_depth=20
+    )
+
+    with patch.object(agent, "webbridge", mock_collector), \
+         patch.object(agent, "_get_option_chain", return_value=synthetic_chain):
         result = agent.run(
             url="https://dext.dhan.co/dashboard",
             symbol="NIFTY",
@@ -56,28 +62,28 @@ def test_exposure_agent_webbridge_path(delta_snapshot, gamma_snapshot):
             strategy_name="Directional Credit Spread",
         )
 
-    assert result.status == "SUCCESS"
+    assert result.status == "SUCCESS", result.reason
     assert result.collector_used == "webbridge"
     assert result.delta_exposure is not None
     assert result.gamma_exposure is not None
     assert result.spot_price is not None
     assert result.strike_recommendation.get("variant_used") == "GEX_DEX_ALIGNED"
-    assert len(result.strike_recommendation.get("legs", [])) == 2
+    legs = result.strike_recommendation.get("legs", [])
+    assert len(legs) == 2
+    # Both strikes must be multiples of the NIFTY step size (50)
+    for leg in legs:
+        assert leg["strike"] % 50 == 0, f"Strike {leg['strike']} not rounded to step 50"
 
 
-def test_exposure_agent_mcp_fallback():
-    agent = DhanExposureAgent(daemon_url="http://127.0.0.1:1", use_mcp_fallback=True)
+def test_exposure_agent_daemon_unreachable():
+    """When the WebBridge daemon is unreachable the agent returns ERROR immediately."""
+    agent = DhanExposureAgent(daemon_url="http://127.0.0.1:1")
     result = agent.run(
         url="https://dext.dhan.co/dashboard",
         symbol="NIFTY",
         direction="DOWN",
         strategy_name="Directional Credit Spread",
     )
-    # Without WebBridge daemon, it should fall back to MCP/synthetic.
-    assert result.status == "SUCCESS"
-    assert result.collector_used == "dhan_mcp"
-    assert result.strike_recommendation.get("variant_used") == "GEX_DEX_ALIGNED"
-    legs = result.strike_recommendation.get("legs", [])
-    assert len(legs) == 2
-    assert legs[0]["option_type"] == "CE"
-    assert legs[0]["strike"] > result.spot_price
+    assert result.status == "ERROR"
+    assert result.collector_used == ""
+    assert "WebBridge" in result.reason or "reachable" in result.reason

@@ -107,31 +107,21 @@ result = selector.select_strikes(
 )
 ```
 
-### Known bug in strike_selector.py
-
-`select_by_gex_dex_aligned` can return non-rounded strikes when the anchor is forced to `spot ± min_otm_steps * step`. Always round the final short/long strikes to the symbol's `step_size` (NIFTY = 50).
-
-Correct manually:
-
-```python
-step = 50
-short_k = round(short_k / step) * step
-long_k = round(long_k / step) * step
-```
-
-### Recommended logic
+### Strike selection logic
 
 For **UP** (Put Credit Spread):
-- Candidates: `put_support`, `delta_flip`, `gamma_flip`, `peak_neg_gamma_strike`
-- Anchor = `max(valid)`
-- short PE = nearest valid strike ≤ spot - step
-- long PE = short PE - 2 * step
+- Priority candidates (from `config/strike_rules.yaml` → `up_direction_priority`): `put_support`, `delta_flip`, `gamma_flip`, `peak_neg_gamma_strike`
+- Anchor = `max(valid candidates)`
+- `short_k = round(anchor / step) * step`; clamped so short PE is ≤ `spot − step`
+- `long_k  = round((short_k − 2 × step) / step) * step`
 
 For **DOWN** (Call Credit Spread):
-- Candidates: `call_wall`, `peak_pos_gamma_strike`, `delta_flip`, `gamma_flip`
-- Anchor = `min(valid)`
-- short CE = nearest valid strike ≥ spot + step
-- long CE = short CE + 2 * step
+- Priority candidates (from `down_direction_priority`): `call_wall`, `peak_pos_gamma_strike`, `delta_flip`, `gamma_flip`
+- Anchor = `min(valid candidates)`
+- `short_k = round(anchor / step) * step`; clamped so short CE is ≥ `spot + step`
+- `long_k  = round((short_k + 2 × step) / step) * step`
+
+Both strikes are always rounded to the symbol `step_size` (NIFTY = 50). If either computed strike is absent from the supplied option chain a `ValueError` is raised — widen `strike_depth` or verify the exposure levels.
 
 ## 5. Output Template
 
