@@ -55,15 +55,23 @@ class ConfluenceEngine:
         w_cluster = float(conf_weights.get("vah_val_near_dex", 20.0))
         w_vol_confirm = float(conf_weights.get("volume_confirmation", 10.0))
 
-        call_wall = float(dex_data.get("call_wall", 0.0))
-        put_support = float(dex_data.get("put_support", 0.0))
-        delta_flip = float(dex_data.get("delta_flip", 0.0))
+        def safe_float(val, default=0.0):
+            if val is None:
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
+        call_wall = safe_float(dex_data.get("call_wall"))
+        put_support = safe_float(dex_data.get("put_support"))
+        delta_flip = safe_float(dex_data.get("delta_flip"))
         dex_clusters = dex_data.get("dex_clusters", [])
 
-        poc = float(vp_data.get("poc", 0.0))
-        vah = float(vp_data.get("vah", 0.0))
-        val = float(vp_data.get("val", 0.0))
-        vol_delta = float(vp_data.get("volume_delta", 0.0))
+        poc = safe_float(vp_data.get("poc"))
+        vah = safe_float(vp_data.get("vah"))
+        val = safe_float(vp_data.get("val"))
+        vol_delta = safe_float(vp_data.get("volume_delta"))
 
         # 1. DEX wall at VP boundary
         cw_at_vah = abs(call_wall - vah) / spot_price <= 0.003 if (call_wall > 0 and vah > 0) else False

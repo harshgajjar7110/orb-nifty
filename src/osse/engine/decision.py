@@ -1,7 +1,39 @@
+import os
+import yaml
+import logging
+
+logger = logging.getLogger(__name__)
+
 class DecisionEngine:
     """
     Translates the numerical score into a discrete trade action (FR-010, FR-011).
+    Thresholds are loaded from config/scoring_rules.yaml.
     """
+
+    _config = None
+    _thresholds = None
+
+    @staticmethod
+    def _load_config():
+        if DecisionEngine._config is not None:
+            return DecisionEngine._config
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        config_path = os.path.join(base_dir, 'config', 'scoring_rules.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                DecisionEngine._config = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.error(f"Failed to load scoring config: {e}")
+            DecisionEngine._config = {}
+        return DecisionEngine._config
+
+    @staticmethod
+    def _get_thresholds():
+        if DecisionEngine._thresholds is not None:
+            return DecisionEngine._thresholds
+        config = DecisionEngine._load_config()
+        DecisionEngine._thresholds = config.get('decision_thresholds', {})
+        return DecisionEngine._thresholds
 
     @staticmethod
     def get_strategy_recommendation(score: float, regime: str = "NEUTRAL", iv_rank: float = 50.0) -> str:
@@ -43,15 +75,18 @@ class DecisionEngine:
         Interprets score and returns confidence, decision, strategy recommendation,
         quantitative strike legs calculation, and DEX + VP confluence evaluation.
         """
+        thresholds = DecisionEngine._get_thresholds()
         strategy = DecisionEngine.get_strategy_recommendation(score, regime, iv_rank)
-        
-        if score >= 75:
-            res = {"confidence": "Exceptional", "decision": "TRADE", "recommended_strategy": strategy}
-        elif score >= 65:
+
+        trade_threshold = thresholds.get("TRADE", {}).get("min_score", 65)
+        reduced_threshold = thresholds.get("REDUCED_SIZE", {}).get("min_score", 55)
+        weak_threshold = thresholds.get("NO_TRADE_WEAK", {}).get("min_score", 45)
+
+        if score >= trade_threshold:
             res = {"confidence": "High", "decision": "TRADE", "recommended_strategy": strategy}
-        elif score >= 55:
+        elif score >= reduced_threshold:
             res = {"confidence": "Tradable", "decision": "REDUCED SIZE", "recommended_strategy": strategy}
-        elif score >= 45:
+        elif score >= weak_threshold:
             res = {"confidence": "Weak", "decision": "NO TRADE", "recommended_strategy": strategy}
         else:
             res = {"confidence": "Reject", "decision": "NO TRADE", "recommended_strategy": strategy}
@@ -64,7 +99,7 @@ class DecisionEngine:
 
                 step_size = 100.0 if symbol.upper() == "BANKNIFTY" else 50.0
                 conf_engine = ConfluenceEngine(step_size=step_size)
-                
+
                 dex_info = dex_data or {}
                 vp_info = vp_data or {}
                 s_price = spot_price or 24500.0
@@ -78,7 +113,7 @@ class DecisionEngine:
                     osse_score=score,
                     confluence_score=conf_res.get("confluence_score", 0.0)
                 )
-                
+
                 variant_selector = StrategyVariantSelector(symbol=symbol, step_size=step_size)
                 variants = variant_selector.select_variants(
                     spot_price=s_price,

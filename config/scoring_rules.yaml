@@ -46,13 +46,13 @@ features:
     normalization: bounded
     min_val: 0.0
     max_val: 0.8
-    
+
   trend_consistency:
     weight: 5
     normalization: bounded
     min_val: 0.0
     max_val: 0.5
-    
+
   opening_momentum:
     weight: 10
     normalization: bounded
@@ -86,6 +86,27 @@ confluence_weights:
 unified_score_weights:
   osse_score_weight: 0.40
   confluence_score_weight: 0.60
+
+calibration:
+  osse_score_weight: 0.40
+  confluence_score_weight: 0.60
+  min_score_for_trade: 45.0
+  sl_multiplier: 1.0
+  max_tunable_knobs: 18
+
+decision_thresholds:
+  TRADE:
+    min_score: 65
+    confidence: "High"
+  REDUCED_SIZE:
+    min_score: 55
+    confidence: "Tradable"
+  NO_TRADE_WEAK:
+    min_score: 45
+    confidence: "Weak"
+  NO_TRADE_REJECT:
+    min_score: 0
+    confidence: "Reject"
 
 regimes:
   TRENDING:

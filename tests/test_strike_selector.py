@@ -45,9 +45,9 @@ def test_strike_selector_delta_targeted_variant():
     assert res["variant_used"] == "DELTA_TARGETED"
     assert len(res["legs"]) == 2
     # Short leg delta should be close to 0.20
-    assert abs(abs(res["legs"][0]["delta"]) - 0.20) < 0.10
+    assert abs(abs(res["legs"][0]["delta"]) - 0.20) < 0.05
     # Long leg delta should be close to 0.08
-    assert abs(abs(res["legs"][1]["delta"]) - 0.08) < 0.08
+    assert abs(abs(res["legs"][1]["delta"]) - 0.08) < 0.03
 
 def test_strike_selector_oi_wall_variant():
     selector = StrikeSelector()

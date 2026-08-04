@@ -70,14 +70,20 @@ class DataCollector:
     def set_dhan_credentials(client_id: str, access_token: str):
         """Sets Dhan API credentials dynamically in environment and persists to .env file."""
         if client_id and access_token:
-            os.environ["dhan_client_id"] = client_id.strip()
-            os.environ["dhan_access_token"] = access_token.strip()
+            import re
+            cleaned_id = client_id.strip()
+            cleaned_token = access_token.strip()
+            if not re.match(r"^[a-zA-Z0-9_\-]+$", cleaned_id) or not re.match(r"^[a-zA-Z0-9_\-]+$", cleaned_token):
+                raise ValueError("Invalid characters detected in client_id or access_token. Only A-Z, 0-9, _, and - allowed.")
+            
+            os.environ["dhan_client_id"] = cleaned_id
+            os.environ["dhan_access_token"] = cleaned_token
             DataCollector._client = None
 
             try:
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
                 env_path = os.path.join(base_dir, ".env")
-                env_content = f"# DhanHQ API Credentials\ndhan_client_id={client_id.strip()}\ndhan_access_token={access_token.strip()}\n\n# Python Module Search Path\nPYTHONPATH=src\n"
+                env_content = f"# DhanHQ API Credentials\ndhan_client_id={cleaned_id}\ndhan_access_token={cleaned_token}\n\n# Python Module Search Path\nPYTHONPATH=src\n"
                 with open(env_path, "w") as f:
                     f.write(env_content)
             except Exception as e:

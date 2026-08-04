@@ -9,6 +9,8 @@ Turns the latest option-chain + candle snapshot into:
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import logging
+import os
+import yaml
 
 import pandas as pd
 import numpy as np
@@ -61,8 +63,22 @@ class InsightsGenerator:
         Runs DEX + VP + Confluence + Variants and produces alerts + summary.
         """
         osse_score = osse_score if osse_score is not None else self.osse_score
-        step_size = 100.0 if symbol.upper() == "BANKNIFTY" else 50.0
-        lot_size = 30 if symbol.upper() == "BANKNIFTY" else 75
+        
+        # Load symbol configurations from strike_rules.yaml dynamically
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        rules_path = os.path.join(base_dir, "config", "strike_rules.yaml")
+        symbols_cfg = {}
+        if os.path.exists(rules_path):
+            try:
+                with open(rules_path, "r") as f:
+                    symbols_cfg = yaml.safe_load(f).get("symbols", {})
+            except Exception:
+                pass
+                
+        sym_upper = symbol.upper()
+        sym_rules = symbols_cfg.get(sym_upper, symbols_cfg.get("DEFAULT_STOCK", {"step_size": 50, "lot_size": 75}))
+        step_size = float(sym_rules.get("step_size", 50.0))
+        lot_size = int(sym_rules.get("lot_size", 75))
 
         # Run quantitative engines
         dex_res = DEXCalculator(default_lot_size=lot_size).calculate_dex(chain_df, spot_price=spot_price)

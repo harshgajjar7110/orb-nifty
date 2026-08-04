@@ -12,7 +12,8 @@ def simulate_trade(
     decision: Dict[str, Any],
     sl_buffer_pct: float = 0.001,
     use_trailing_sl: bool = False,
-    trailing_step_pct: float = 0.005
+    trailing_step_pct: float = 0.005,
+    score: float = 50.0
 ) -> Dict[str, Any]:
     """
     Simulates intraday breakout trade execution tick-by-tick with configurable stop-loss buffer
@@ -24,6 +25,7 @@ def simulate_trade(
     :param sl_buffer_pct: Stop loss buffer percentage (default 0.001 = 0.1%)
     :param use_trailing_sl: Enable trailing stop loss logic
     :param trailing_step_pct: Trailing SL distance percentage (default 0.005 = 0.5%)
+    :param score: OSSE score (0-100); bullish if >= 50, bearish if < 50
     :return: Decision dictionary updated with MFE, MAE, trade_pnl, and execution details
     """
     if decision.get("decision") not in ["TRADE", "REDUCED SIZE"]:
@@ -42,15 +44,17 @@ def simulate_trade(
     low_col = "Low" if "Low" in trade_data.columns else "low"
     close_col = "Close" if "Close" in trade_data.columns else "close"
 
-    # Find breakout entry bar
+    is_bullish = score >= 50.0
+
+    # Find breakout entry bar aligned with score direction
     entry_idx_name = None
     for idx, row in trade_data.iterrows():
-        if row[high_col] > orb_high:
+        if row[high_col] > orb_high and is_bullish:
             entry_price = orb_high
             direction = 1
             entry_idx_name = idx
             break
-        elif row[low_col] < orb_low:
+        elif row[low_col] < orb_low and not is_bullish:
             entry_price = orb_low
             direction = -1
             entry_idx_name = idx

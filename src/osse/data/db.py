@@ -1,10 +1,22 @@
 import os
 import logging
+import math
 from typing import Optional
 import pandas as pd
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+def _sanitize(value, default=0.0):
+    try:
+        if value is None:
+            return default
+        v = float(value)
+        if math.isnan(v) or math.isinf(v):
+            return default
+        return v
+    except (TypeError, ValueError):
+        return default
 
 class DatabaseManager:
     """
@@ -38,8 +50,6 @@ class DatabaseManager:
             
         try:
             df = pd.read_parquet(DatabaseManager._dist_file)
-            # Filter by date and symbol
-            # Convert date_str to datetime object for comparison if needed, or leave as string
             mask = (df['date'] == date_str) & (df['symbol'] == symbol)
             filtered = df[mask]
             
@@ -52,33 +62,37 @@ class DatabaseManager:
             return {}
 
     @staticmethod
-    def save_analysis(date_str: str, symbol: str, raw_features: dict, orb_stats: dict, score: float, decision: dict, run_id: str = "DAILY"):
+    def save_analysis(date_str: str, symbol: str, raw_features: dict, orb_stats: dict, score: float, decision: dict, run_id: str = "DAILY", calibrated_score: float = None, confluence_score: float = None, unified_score: float = None, ml_probability: float = None):
         """
         Appends an analysis record into the Parquet file.
+        Persists raw features, orb stats, score, decision, and new Phase 2/3 fields.
         """
         DatabaseManager._initialize_paths()
         
-        # Extract features (fallback to 0)
         new_row = {
             'timestamp': pd.to_datetime(f"{date_str} 09:30:00"),
             'date': date_str,
             'symbol': symbol,
             'run_id': run_id,
-            'orb_high': orb_stats.get('orb_high', 0),
-            'orb_low': orb_stats.get('orb_low', 0),
-            'orb_width': orb_stats.get('orb_width', 0),
-            'orb_percent': raw_features.get('orb_width', 0),
-            'relative_volume': raw_features.get('relative_volume', 0),
-            'atr': raw_features.get('atr_expansion', 0),
-            'adx': raw_features.get('adx', 0),
-            'ema_alignment': raw_features.get('ema_alignment', 0),
-            'vwap_distance': raw_features.get('vwap_distance', 0),
-            'candle_efficiency': raw_features.get('candle_efficiency', 0),
-            'normalized_score': score,
+            'orb_high': _sanitize(orb_stats.get('orb_high', 0)),
+            'orb_low': _sanitize(orb_stats.get('orb_low', 0)),
+            'orb_width': _sanitize(orb_stats.get('orb_width', 0)),
+            'orb_percent': _sanitize(raw_features.get('orb_width', 0)),
+            'relative_volume': _sanitize(raw_features.get('relative_volume', 0)),
+            'atr': _sanitize(raw_features.get('atr_expansion', 0)),
+            'adx': _sanitize(raw_features.get('adx', 0)),
+            'ema_alignment': _sanitize(raw_features.get('ema_alignment', 0)),
+            'vwap_distance': _sanitize(raw_features.get('vwap_distance', 0)),
+            'candle_efficiency': _sanitize(raw_features.get('candle_efficiency', 0)),
+            'normalized_score': _sanitize(score, 0.0),
+            'calibrated_score': _sanitize(calibrated_score),
+            'confluence_score': _sanitize(confluence_score),
+            'unified_score': _sanitize(unified_score),
+            'ml_probability': _sanitize(ml_probability),
             'decision': decision.get('decision', 'NO TRADE'),
-            'trade_pnl': decision.get('trade_pnl'),
-            'mfe': decision.get('mfe'),
-            'mae': decision.get('mae'),
+            'trade_pnl': _sanitize(decision.get('trade_pnl')),
+            'mfe': _sanitize(decision.get('mfe')),
+            'mae': _sanitize(decision.get('mae')),
             'market_regime': decision.get('market_regime'),
             'created_at': pd.Timestamp.now()
         }
@@ -86,8 +100,6 @@ class DatabaseManager:
         try:
             new_df = pd.DataFrame([new_row])
             if os.path.exists(DatabaseManager._score_file):
-                # We could append using pyarrow or fastparquet directly, but reading and concating 
-                # is fine for this scale (a few thousand rows).
                 existing_df = pd.read_parquet(DatabaseManager._score_file)
                 if not existing_df.empty:
                     combined = pd.concat([existing_df.dropna(how='all', axis=1), new_df.dropna(how='all', axis=1)], ignore_index=True)
@@ -119,15 +131,15 @@ class DatabaseManager:
             "symbol": symbol,
             "spot_price": float(spot_price),
             "osse_score": float(summary.get("osse_score", 0.0)),
-            "vix": float(summary.get("vix", 0.0)),
-            "pcr_oi": float(summary.get("pcr_oi", 1.0)),
-            "total_oi": float(summary.get("total_oi", 0.0)),
-            "call_wall": float(dex.get("call_wall", 0.0)),
-            "put_support": float(dex.get("put_support", 0.0)),
-            "delta_flip": float(dex.get("delta_flip", 0.0)),
-            "poc": float(vp.get("poc", 0.0)),
-            "vah": float(vp.get("vah", 0.0)),
-            "val": float(vp.get("val", 0.0)),
+            "vix": float(summary.get("vix") or 0.0),
+            "pcr_oi": float(summary.get("pcr_oi") or 1.0),
+            "total_oi": float(summary.get("total_oi") or 0.0),
+            "call_wall": float(dex.get("call_wall") or 0.0),
+            "put_support": float(dex.get("put_support") or 0.0),
+            "delta_flip": float(dex.get("delta_flip") or 0.0),
+            "poc": float(vp.get("poc") or 0.0),
+            "vah": float(vp.get("vah") or 0.0),
+            "val": float(vp.get("val") or 0.0),
             "confluence_score": float(confluence.get("confluence_score", 0.0)),
             "confluence_tier": confluence.get("tier", ""),
             "unified_score": float(unified.get("unified_score", 0.0)),

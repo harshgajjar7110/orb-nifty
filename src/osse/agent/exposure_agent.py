@@ -47,7 +47,7 @@ class ExposureAgentResult:
     @staticmethod
     def _jsonify(obj: Any) -> Any:
         """Recursively converts numpy/pandas types to JSON-serializable natives."""
-        if isinstance(obj, (np.bool_, np.bool)):
+        if isinstance(obj, (np.bool_, bool)):
             return bool(obj)
         if isinstance(obj, (np.integer, np.floating)):
             return obj.item()

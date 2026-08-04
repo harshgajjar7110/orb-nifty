@@ -82,7 +82,7 @@ class GammaExposureCalculator:
         # Gamma Flip: zero crossing of Net GEX closest to spot
         net_gex_arr = df["net_gex"].values
         strikes = df[strike_col].values
-        gamma_flip = float(strikes[len(strikes) // 2])
+        gamma_flip = None
         sign_changes = np.where(np.diff(np.signbit(net_gex_arr)))[0]
         if len(sign_changes) > 0:
             if spot_price and spot_price > 0:

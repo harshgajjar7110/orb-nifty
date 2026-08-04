@@ -34,3 +34,12 @@ data/*.csv
 # Operating System Files
 .DS_Store
 Thumbs.db
+
+# Kilo Agent Manager (node_modules + worktrees)
+.kilo/node_modules/
+.kilo/worktrees/
+
+# Backtest CSV Artifacts & WebBridge Request Payloads
+1y_enhanced_backtest_results.csv
+30d_backtest_audit_results.csv
+webbridge_req.json

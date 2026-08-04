@@ -8,26 +8,53 @@ Fast, reusable Dhan Dext (https://dext.dhan.co/dashboard) Delta/Gamma exposure e
 # Ensure daemon is up
 ~/.kimi-webbridge/bin/kimi-webbridge start
 
-# Navigate
+# Open dashboard
+session="dhan-dex-check"
 curl -s -X POST http://127.0.0.1:10086/command \
   -H 'Content-Type: application/json' \
-  -d '{"action":"navigate","args":{"url":"https://dext.dhan.co/dashboard","newTab":true,"group_title":"Dhan DEX check"},"session":"dhan-dex-check"}'
+  -d "{\"action\":\"navigate\",\"args\":{\"url\":\"https://dext.dhan.co/dashboard\",\"newTab\":true,\"group_title\":\"Dhan DEX check\"},\"session\":\"$session\"}"
 
 # Wait 2-3s, then extract
 ```
 
-## 1. Extract Summary
+## 0. DOM / Render Notes
+
+- Page is a React app. Key controls are real DOM nodes, not canvas.
+- **Expiry selector**: hidden `<select class="appearance-none text-primary ...">` with `<option>` text like `11 Aug 2026` and `value` = Unix timestamp (e.g. `1786386600`).
+- There is also a visible `<button class="global-dropdown-button max-w-34">` showing the selected date, but changing the `<select>` + dispatching `change` updates the page reliably.
+- **Δ / Γ tabs**: buttons whose text contains `Delta Exposure` / `Gamma Exposure`.
+- **Summary cards**: text nodes for labels (`Total Call`, `Total Put`, `Total Net`, `DEX Ratio`, `Nifty 50`, `Spot Price`). Their parent element holds the value.
+- **Exposure table**: rows use class containing `greeks-exposure-table-row`.
+- **VIX**: not shown on this page. Fetch India VIX externally if POP/margin calcs are needed.
+
+## 1. Select Expiry
 
 ```javascript
 (() => {
-  const labels = Array.from(document.querySelectorAll("*")).filter(
-    el => el.children.length === 0 && /(Total Call|Total Put|Total Net|DEX Ratio|Nifty 50)/.test(el.textContent)
+  const sel = document.querySelector('select.appearance-none');
+  if (!sel) return 'no expiry select';
+  const target = Array.from(sel.options).find(o => /11 Aug/.test(o.text));
+  if (!target) return JSON.stringify({ options: Array.from(sel.options).map(o => o.text) });
+  sel.value = target.value;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  return JSON.stringify({ selected: target.text, value: target.value });
+})()
+```
+
+Wait 2-3 s after `change` for data to refresh.
+
+## 2. Extract Summary
+
+```javascript
+(() => {
+  const labels = Array.from(document.querySelectorAll('body *')).filter(
+    el => el.children.length === 0 && /(Total Call|Total Put|Total Net|DEX Ratio|Nifty 50|Spot Price)/.test(el.textContent)
   );
   const summary = {};
   labels.forEach(el => {
     const parent = el.parentElement?.textContent?.trim();
     if (!parent) return;
-    const m = parent.match(/(Total Call|Total Put|Total Net|DEX Ratio|Nifty 50)[:\s]*([^\n]+)/);
+    const m = parent.match(/(Total Call|Total Put|Total Net|DEX Ratio|Nifty 50|Spot Price)[:\\s]*(.+)/);
     if (m) summary[m[1]] = m[2].trim();
   });
   return JSON.stringify(summary);
@@ -40,10 +67,9 @@ Returns:
 - `Total Put` → e.g. `-57,07,756.76 Cr`
 - `Total Net` → e.g. `2,46,279.40 Cr`
 - `DEX Ratio` → e.g. `0.96 (Balanced)`
+- `Spot Price` → string; first numeric token is spot (parent may include chart axis labels).
 
-Spot price is in the SVG text as `Spot Price 24416.80`.
-
-## 2. Extract Δ Exposure Table
+## 3. Extract Δ Exposure Table
 
 ```javascript
 (() => {
@@ -61,7 +87,7 @@ Key tags to grep:
 - `Call Resistance`
 - `Peak +Delta exp`
 
-## 3. Switch to Γ Exposure
+## 4. Switch to Γ Exposure
 
 ```javascript
 (() => {
@@ -73,9 +99,9 @@ Key tags to grep:
 })()
 ```
 
-Wait 2s, then repeat table extraction (step 2). Tags are similar: `Peak -Gamma exp`, `Put Support`, `Call Resistance Gamma Flip`, `Peak +Gamma exp`.
+Wait 2s, then repeat table extraction (step 3). Tags are similar: `Peak -Gamma exp`, `Put Support`, `Call Resistance Gamma Flip`, `Peak +Gamma exp`.
 
-## 4. Compute GEX_DEX_ALIGNED Strikes
+## 5. Compute GEX_DEX_ALIGNED Strikes
 
 Use `src/osse/options/strike_selector.py` with variant `GEX_DEX_ALIGNED`.
 
@@ -101,6 +127,7 @@ result = selector.select_strikes(
     symbol="NIFTY",
     variant="GEX_DEX_ALIGNED",
     direction="UP",  # or "DOWN"
+    expiry_type="NEXT_WEEKLY",  # use when target is next weekly expiry
     dex_data=dex_data,
     gex_data=gex_data,
     vix=10.33,
@@ -123,7 +150,7 @@ For **DOWN** (Call Credit Spread):
 
 Both strikes are always rounded to the symbol `step_size` (NIFTY = 50). If either computed strike is absent from the supplied option chain a `ValueError` is raised — widen `strike_depth` or verify the exposure levels.
 
-## 5. Output Template
+## 6. Output Template
 
 ```
 DEX check — <expiry>
@@ -144,7 +171,7 @@ Strikes:
 No order placed. Confirm direction + qty to execute.
 ```
 
-## 6. Notes
+## 7. Notes
 
 - Dhan Dext lot size shown is 65 for NIFTY, but `config/strike_rules.yaml` uses 75. Update config if P&L must match Dhan.
 - Do not auto-place orders; always ask for explicit direction + quantity confirmation.

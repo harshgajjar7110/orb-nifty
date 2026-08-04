@@ -3,7 +3,7 @@ from typing import List, Dict
 
 class MetricsCalculator:
     """
-    Calculates basic performance metrics on OSSE scoring decisions.
+    Calculates performance metrics on OSSE scoring decisions.
     """
 
     @staticmethod
@@ -46,4 +46,43 @@ class MetricsCalculator:
             "avg_mfe": round(avg_mfe, 2),
             "avg_mae": round(avg_mae, 2),
             "mfe_mae_ratio": round(mfe_mae_ratio, 2)
+        }
+
+    @staticmethod
+    def calculate_regime_stratified(results: List[Dict]) -> Dict:
+        """
+        Returns MFE/MAE and win-rate metrics stratified by market regime.
+        """
+        if not results:
+            return {"error": "No results provided"}
+
+        df = pd.DataFrame(results)
+        if 'market_regime' not in df.columns:
+            return MetricsCalculator.calculate_summary(results)
+
+        regimes = df['market_regime'].dropna().unique()
+        regime_metrics = {}
+
+        for regime in regimes:
+            regime_df = df[df['market_regime'] == regime]
+            regime_pnl = regime_df['trade_pnl'].dropna() if 'trade_pnl' in regime_df.columns else pd.Series()
+            regime_wins = len(regime_pnl[regime_pnl > 0]) if len(regime_pnl) > 0 else 0
+            regime_mfe = regime_df['mfe'].mean() if 'mfe' in regime_df.columns and not regime_df['mfe'].dropna().empty else 0.0
+            regime_mae = regime_df['mae'].mean() if 'mae' in regime_df.columns and not regime_df['mae'].dropna().empty else 0.0
+            regime_mfe_mae = (regime_mfe / regime_mae) if regime_mae > 0 else 0.0
+
+            regime_metrics[regime] = {
+                "days": len(regime_df),
+                "trades": len(regime_df[regime_df['decision'].isin(['TRADE', 'REDUCED SIZE'])]),
+                "wins": regime_wins,
+                "win_rate": round((regime_wins / len(regime_pnl) * 100), 2) if len(regime_pnl) > 0 else 0.0,
+                "avg_mfe": round(regime_mfe, 2),
+                "avg_mae": round(regime_mae, 2),
+                "mfe_mae_ratio": round(regime_mfe_mae, 2),
+                "avg_pnl": round(regime_pnl.mean(), 2) if len(regime_pnl) > 0 else 0.0
+            }
+
+        return {
+            "by_regime": regime_metrics,
+            "regimes_evaluated": len(regimes)
         }

@@ -73,7 +73,7 @@ class DEXCalculator:
         net_dex_arr = df["net_dex"].values
         strikes = df[strike_col].values
         
-        delta_flip = float(strikes[len(strikes) // 2]) # default to middle/ATM
+        delta_flip = None # default to None if no sign change
         sign_changes = np.where(np.diff(np.signbit(net_dex_arr)))[0]
         
         if len(sign_changes) > 0:

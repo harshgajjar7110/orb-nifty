@@ -95,10 +95,15 @@ class DhanMCPCollector:
         if "strike_price" not in df.columns and "strike" in df.columns:
             df = df.rename(columns={"strike": "strike_price"})
 
-        has_ce_delta = "ce_delta" in df.columns and df["ce_delta"].notna().any()
-        has_pe_delta = "pe_delta" in df.columns and df["pe_delta"].notna().any()
+        if "ce_delta" not in df.columns:
+            df["ce_delta"] = np.nan
+        if "pe_delta" not in df.columns:
+            df["pe_delta"] = np.nan
 
-        if has_ce_delta and has_pe_delta:
+        missing_ce = df["ce_delta"].isna()
+        missing_pe = df["pe_delta"].isna()
+
+        if not missing_ce.any() and not missing_pe.any():
             return df
 
         try:
@@ -111,9 +116,9 @@ class DhanMCPCollector:
         r = 0.065
         spot = spot_price if spot_price and spot_price > 0 else df["strike_price"].median()
 
-        if not has_ce_delta:
+        if missing_ce.any():
             ce_iv_col = "ce_iv" if "ce_iv" in df.columns else "call_iv"
-            df["ce_delta"] = df.apply(
+            df.loc[missing_ce, "ce_delta"] = df[missing_ce].apply(
                 lambda row: BlackScholesEngine.calculate_delta(
                     S=spot,
                     K=float(row["strike_price"]),
@@ -125,9 +130,9 @@ class DhanMCPCollector:
                 axis=1
             )
 
-        if not has_pe_delta:
+        if missing_pe.any():
             pe_iv_col = "pe_iv" if "pe_iv" in df.columns else "put_iv"
-            df["pe_delta"] = df.apply(
+            df.loc[missing_pe, "pe_delta"] = df[missing_pe].apply(
                 lambda row: BlackScholesEngine.calculate_delta(
                     S=spot,
                     K=float(row["strike_price"]),

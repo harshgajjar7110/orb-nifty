@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import time
 import logging
+import asyncio
 
 from osse.data.collector import DataCollector
 from osse.data.validator import DataValidator
@@ -43,8 +44,8 @@ async def generate_score(request: ScoreRequest):
     
     try:
         # 1. Fetch Data
-        intraday_df = DataCollector.fetch_data(request.symbol, start_date=request.date)
-        daily_context = DataCollector.fetch_daily_context(request.symbol, date=request.date)
+        intraday_df = await asyncio.to_thread(DataCollector.fetch_data, request.symbol, start_date=request.date)
+        daily_context = await asyncio.to_thread(DataCollector.fetch_daily_context, request.symbol, date=request.date)
         
         # 2. Validate Data
         if not DataValidator.validate_intraday_data(intraday_df):
@@ -154,8 +155,8 @@ async def generate_score(request: ScoreRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error processing score request: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error processing score request")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # -------------------------------------------------------------------
@@ -179,30 +180,32 @@ class SymbolRequest(BaseModel):
 async def get_dex_analysis(request: SymbolRequest):
     """Calculates Delta Exposure (DEX) positioning per strike."""
     try:
-        chain_df = mcp_collector.fetch_option_chain(symbol=request.symbol)
+        chain_df = await asyncio.to_thread(mcp_collector.fetch_option_chain, request.symbol)
         dex_calc = DEXCalculator()
         result = dex_calc.calculate_dex(chain_df, spot_price=request.spot_price)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in /dex endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/v1/volume-profile")
 async def get_volume_profile(request: SymbolRequest):
     """Calculates Volume Profile 70% Value Area (POC, VAH, VAL, HVN, LVN)."""
     try:
-        candles_df = mcp_collector.fetch_chart_candles(symbol=request.symbol)
+        candles_df = await asyncio.to_thread(mcp_collector.fetch_chart_candles, request.symbol)
         vp_calc = VolumeProfileCalculator()
         result = vp_calc.calculate_volume_profile(candles_df)
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in /volume-profile endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/v1/confluence")
 async def get_confluence_analysis(request: SymbolRequest):
     """Calculates Confluence Score & Unified Score from DEX, Volume Profile, and OSSE score."""
     try:
-        chain_df = mcp_collector.fetch_option_chain(symbol=request.symbol)
-        candles_df = mcp_collector.fetch_chart_candles(symbol=request.symbol)
+        chain_df = await asyncio.to_thread(mcp_collector.fetch_option_chain, request.symbol)
+        candles_df = await asyncio.to_thread(mcp_collector.fetch_chart_candles, request.symbol)
 
         dex_calc = DEXCalculator()
         dex_res = dex_calc.calculate_dex(chain_df, spot_price=request.spot_price)
@@ -228,14 +231,15 @@ async def get_confluence_analysis(request: SymbolRequest):
             "unified_score": unified_res
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in /confluence endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/v1/strategy-variants")
 async def get_strategy_variants(request: SymbolRequest):
     """Evaluates and outputs active DEX + VP 70% Strategy Variants."""
     try:
-        chain_df = mcp_collector.fetch_option_chain(symbol=request.symbol)
-        candles_df = mcp_collector.fetch_chart_candles(symbol=request.symbol)
+        chain_df = await asyncio.to_thread(mcp_collector.fetch_option_chain, request.symbol)
+        candles_df = await asyncio.to_thread(mcp_collector.fetch_chart_candles, request.symbol)
 
         dex_res = DEXCalculator().calculate_dex(chain_df, spot_price=request.spot_price)
         vp_res = VolumeProfileCalculator().calculate_volume_profile(candles_df)
@@ -273,7 +277,8 @@ async def get_strategy_variants(request: SymbolRequest):
             "variants": variants
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in /strategy-variants endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.post("/api/v1/explain")
 async def get_ai_explanation(request: SymbolRequest):
@@ -282,8 +287,8 @@ async def get_ai_explanation(request: SymbolRequest):
         from osse.analysis.ai_chart_explainer import AIChartExplainer
 
         # Fetch real intraday data & daily context
-        intraday_df = DataCollector.fetch_data(request.symbol, start_date=request.date)
-        daily_context = DataCollector.fetch_daily_context(request.symbol, date=request.date)
+        intraday_df = await asyncio.to_thread(DataCollector.fetch_data, request.symbol, start_date=request.date)
+        daily_context = await asyncio.to_thread(DataCollector.fetch_daily_context, request.symbol, date=request.date)
 
         if not intraday_df.empty and DataValidator.validate_intraday_data(intraday_df):
             intraday_df = IndicatorEngine.add_indicators(intraday_df)
@@ -307,7 +312,8 @@ async def get_ai_explanation(request: SymbolRequest):
         )
         return {"explanation": explanation}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error in /explain endpoint")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # -------------------------------------------------------------------
@@ -346,8 +352,8 @@ async def get_exposure_strikes(request: ExposureStrikeRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing exposure-strikes request: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error processing exposure-strikes request")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 

@@ -2,7 +2,6 @@ import pandas as pd
 import logging
 import time
 from typing import List, Dict
-from typing import List, Dict
 
 from osse.data.collector import DataCollector
 from osse.data.validator import DataValidator
@@ -11,6 +10,8 @@ from osse.features.orb_builder import ORBBuilder
 from osse.features.engineering import FeatureEngineering
 from osse.engine.scorer import ScoringEngine
 from osse.engine.decision import DecisionEngine
+from osse.data.db import DatabaseManager
+from osse.backtest.simulation import simulate_trade
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,6 @@ class BacktestEngine:
                 regime = FeatureEngineering.detect_regime(raw_features, daily_context)
                 
                 # 5.5 Fetch Historical Distributions
-                from osse.data.db import DatabaseManager
                 hist_stats = DatabaseManager.get_historical_stats(date, symbol)
                 
                 # 6. Scorer
@@ -107,12 +107,17 @@ class BacktestEngine:
                 decision['market_regime'] = regime
                 
                 # 7. Simulate Trade using unified simulation engine
-                from osse.backtest.simulation import simulate_trade
-                decision = simulate_trade(intraday_df, orb_stats, decision, sl_buffer_pct=sl_buffer_pct, use_trailing_sl=use_trailing_sl)
+                decision = simulate_trade(intraday_df, orb_stats, decision, sl_buffer_pct=sl_buffer_pct, use_trailing_sl=use_trailing_sl, score=score)
                 
                 # 10. Save to Database
-                from osse.data.db import DatabaseManager
-                DatabaseManager.save_analysis(date, symbol, raw_features, orb_stats, score, decision, run_id=run_id)
+                DatabaseManager.save_analysis(
+                    date, symbol, raw_features, orb_stats, score, decision,
+                    run_id=run_id,
+                    calibrated_score=score,
+                    confluence_score=decision.get('confluence', {}).get('confluence_score') if isinstance(decision.get('confluence'), dict) else None,
+                    unified_score=decision.get('unified_score', {}).get('unified_score') if isinstance(decision.get('unified_score'), dict) else None,
+                    ml_probability=None
+                )
                 
                 # Store Result
                 result = {

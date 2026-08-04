@@ -29,9 +29,17 @@ def run_historical_job_batch(days=365, symbol="^NSEI", sl_buffer_pct=0.003):
     
     # 1. Delete old database to prevent pollution
     if os.path.exists(score_file):
+        import shutil
+        backup_score = f"{score_file}.bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        shutil.copy2(score_file, backup_score)
+        logger.info(f"Created backup of database at {backup_score}")
         os.remove(score_file)
         logger.info(f"Deleted old database at {score_file}")
     if os.path.exists(cache_file):
+        import shutil
+        backup_cache = f"{cache_file}.bak.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        shutil.copy2(cache_file, backup_cache)
+        logger.info(f"Created backup of cache at {backup_cache}")
         os.remove(cache_file)
         logger.info(f"Deleted old cache at {cache_file}")
         
@@ -124,10 +132,10 @@ def run_historical_job_batch(days=365, symbol="^NSEI", sl_buffer_pct=0.003):
                 
                 # Simulate Trade using unified simulation engine
                 from osse.backtest.simulation import simulate_trade
-                decision = simulate_trade(day_df, orb_stats, decision, sl_buffer_pct=sl_buffer_pct)
+                decision = simulate_trade(day_df, orb_stats, decision, sl_buffer_pct=sl_buffer_pct, score=score)
                 
                 # Save to Database
-                DatabaseManager.save_analysis(date, symbol, raw_features, orb_stats, score, decision, run_id="BATCH")
+                DatabaseManager.save_analysis(date, symbol, raw_features, orb_stats, score, decision, run_id="BATCH", calibrated_score=score)
                 logger.info(f"{date}: {symbol} - Score: {score:.2f} (ADX: {raw_features.get('adx', 0):.2f}, EMA Align: {raw_features.get('ema_alignment', 0)})")
                 
             except Exception as e:
@@ -154,7 +162,13 @@ def run_historical_job_batch(days=365, symbol="^NSEI", sl_buffer_pct=0.003):
     df = df[df['symbol'] == symbol].sort_values(by='date', ascending=True)
     df.set_index('date', inplace=True)
     
-    features = ['relative_volume', 'atr', 'adx', 'ema_alignment', 'vwap_distance', 'candle_efficiency', 'orb_width']
+    # Dynamically include all features from scoring config that exist in the dataframe
+    scorer = ScoringEngine()
+    config_features = scorer.features_config.keys() if hasattr(scorer, 'features_config') else []
+    features = [f for f in config_features if f in df.columns]
+    if not features:
+        features = ['relative_volume', 'atr', 'adx', 'ema_alignment', 'vwap_distance', 'candle_efficiency', 'orb_width']
+    
     window = 60
     dist_records = []
     

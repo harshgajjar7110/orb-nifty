@@ -753,6 +753,7 @@ elif mode == "Backtest":
 
                                     orb_stats = {"orb_high": row['orb_high'], "orb_low": row['orb_low']}
                                     dec_dict = {"decision": row['decision']}
+                                    row_score = float(row.get('score', 50.0))
 
                                     from osse.backtest.simulation import simulate_trade
                                     sim_res = simulate_trade(
@@ -761,7 +762,8 @@ elif mode == "Backtest":
                                         decision=dec_dict,
                                         sl_buffer_pct=sl_pct / 100.0,
                                         use_trailing_sl=enable_tsl,
-                                        trailing_step_pct=tsl_dist / 100.0
+                                        trailing_step_pct=tsl_dist / 100.0,
+                                        score=row_score
                                     )
 
                                     if "trade_pnl" in sim_res:

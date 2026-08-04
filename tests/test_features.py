@@ -4,6 +4,7 @@ sys.modules['talib'] = MagicMock()
 
 import pytest
 import pandas as pd
+import numpy as np
 from unittest.mock import patch
 from osse.features.indicators import IndicatorEngine
 from osse.features.orb_builder import ORBBuilder
@@ -66,4 +67,56 @@ def test_extract_features():
     assert features['adx'] == 25
     assert features['ema_alignment'] == 1.0
     assert features['atr_expansion'] == 1.0
+
+def test_extract_features_nan_guards():
+    """Ensure NaN values in indicators are sanitized to valid floats."""
+    dates = pd.date_range("2023-01-01 09:15", "2023-01-01 09:29", freq="1min", tz="Asia/Kolkata")
+    intraday_df = pd.DataFrame({
+        'Open': [100]*15, 'High': [105]*15, 'Low': [95]*15, 'Close': [102]*15, 'Volume': [1000]*15,
+        'VWAP': [np.nan]*15, 'EMA_20': [np.nan]*15, 'EMA_50': [np.nan]*15, 'ATR_14': [np.nan]*15,
+        'ADX_14': [np.nan]*15, 'RSI_14': [np.nan]*15
+    }, index=dates)
+    
+    orb_stats = {
+        'orb_percent': 10.0,
+        'orb_volume': 0,
+        'orb_width': 10,
+        'candle_efficiency': 0.8
+    }
+    daily_context = {
+        'daily_volume': 0,
+        'prev_close': 100
+    }
+    
+    features = FeatureEngineering.extract_features(intraday_df, orb_stats, daily_context)
+    
+    for key, val in features.items():
+        assert isinstance(val, (int, float)), f"Feature {key} is not a number: {type(val)}"
+        assert not (isinstance(val, float) and np.isnan(val)), f"Feature {key} is NaN"
+
+def test_extract_features_zero_volume_index():
+    """Ensure relative_volume produces valid values for index symbols with zero volume."""
+    dates = pd.date_range("2023-01-01 09:15", "2023-01-01 09:29", freq="1min", tz="Asia/Kolkata")
+    intraday_df = pd.DataFrame({
+        'Open': [100]*15, 'High': [105]*15, 'Low': [95]*15, 'Close': [102]*15, 'Volume': [0]*15,
+        'VWAP': [101]*15, 'EMA_20': [100]*15, 'EMA_50': [99]*15, 'ATR_14': [0]*15,
+        'ADX_14': [25]*15, 'RSI_14': [60]*15
+    }, index=dates)
+    
+    orb_stats = {
+        'orb_percent': 10.0,
+        'orb_volume': 0,
+        'orb_width': 10,
+        'candle_efficiency': 0.8
+    }
+    daily_context = {
+        'daily_volume': 0,
+        'prev_close': 100
+    }
+    
+    features = FeatureEngineering.extract_features(intraday_df, orb_stats, daily_context)
+    
+    assert features['relative_volume'] >= 1.0
+    assert features['relative_volume'] <= 2.5
+    assert not (isinstance(features['relative_volume'], float) and np.isnan(features['relative_volume']))
 
