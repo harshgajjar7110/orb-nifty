@@ -3,7 +3,6 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-green.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.36+-red.svg)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A quantitative decision engine and statistical confidence filter for **Opening Range Breakout (ORB)** setups on Indian equity markets — **NIFTY 50**, **BANK NIFTY**, **SENSEX**, **FINNIFTY**, and top NSE equities.
 
@@ -33,12 +32,14 @@ The OSSE engine evaluates intraday 1-minute market structure against 13 statisti
 
 ### Options Analytics
 - **Black-Scholes Synthetic Pricing (`synthetic_pricing.py`):** Computes theoretical option prices and Greeks (Delta, Gamma, Vega, Theta) using `scipy`.
-- **Delta-Targeted Strike Selector (`strike_selector.py`):** Selects option legs based on configurable delta targets (`config/strike_rules.yaml`). Supports 5 selection variants:
+- **Delta-Targeted Strike Selector (`strike_selector.py`):** Selects option legs based on configurable delta targets (`config/strike_rules.yaml`). Supports 6 selection variants:
   - `DELTA_TARGETED` — legs anchored to target delta (default)
-  - `OTM_STEPS` — fixed OTM steps from ATM
+  - `MONEYNESS` — fixed OTM steps from ATM
   - `PREMIUM_TARGETED` — legs selected to hit a premium % of spot
-  - `GEX_DEX_ALIGNED` — anchored to live exposure structural levels
   - `EXPECTED_MOVE` — strikes placed at 1-SD expected move boundary
+  - `OI_WALL` — anchored to open interest walls for support/resistance
+  - `CPR_PIVOT` — anchored to Central Pivot Range levels
+  - `GEX_DEX_ALIGNED` — anchored to live exposure structural levels
 - **Expiry Manager (`expiry_manager.py`):** Determines the correct NSE/BSE expiry date for `WEEKLY`, `NEXT_WEEKLY`, or `MONTHLY` options for all supported indices.
 - **Strategy Variant Selector (`strategy_variants.py`):** Maps confluence tier + OSSE score + direction into the optimal spread variant with risk-sized position recommendations.
 
@@ -74,6 +75,7 @@ Maps OSSE score + IV Rank + regime into explicit trade strategies:
 
 ### Data Pipeline
 - **DataCollector (`collector.py`):** Fetches 1-min OHLCV + India VIX (`^INDIAVIX`) + daily CPR context. Primary source: DhanHQ API → silent fallback to `yfinance` on missing credentials or rate limits.
+- **DataValidator (`validator.py`):** Validates intraday and daily context data before scoring; returns structured error decisions for invalid inputs.
 - **DatabaseManager (`db.py`):** Persists scores, features, and monitor snapshots to local Parquet files under `data/`. Optional PostgreSQL backend (`scripts/init_osse_db.sql`).
 
 ---
@@ -99,7 +101,7 @@ Data Sources
                               │                               DecisionEngine
                          VolumeProfile                        + StrategyVariantSelector
                          Calculator                                     │
-                              │                              StrikeSelector (5 variants)
+                               │                              StrikeSelector (6 variants)
                          ConfluenceEngine                               │
                               │                              ExpiryManager + SyntheticPricing
                          UnifiedScore (0-100)                           │
@@ -111,6 +113,13 @@ Data Sources
                   API (port 8000)      Dashboard           Engine
                                        (port 8501)
 ```
+
+  +-------------------------------------------------------------+
+  |              Dhan DEX Agent (CLI)                       |
+  |  scripts/dhan_dex_agent.py                              |
+  |  Steps 0->7: Navigate -> Extract -> Parse -> Suggest  |
+  |  OpenRouter LLM (temperature=0.0) for parsing          |
+  +-------------------------------------------------------------+
 
 ---
 
@@ -158,6 +167,9 @@ DB_PORT=5432
 DB_NAME=osse_db
 DB_USER=postgres
 DB_PASSWORD=YOUR_DB_PASSWORD
+
+# OpenRouter LLM (used by Dhan DEX agent for parsing and strike suggestions)
+OPENROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
 
 PYTHONPATH=src
 ```
@@ -346,6 +358,39 @@ python scripts/run_exposure_agent.py \
 
 ---
 
+## 🤖 Dhan DEX Agent (Deterministic Workflow)
+
+A fully deterministic CLI agent for extracting Dhan DEX dashboard data via Kimi WebBridge, with OpenRouter LLM integration for parsing and strike suggestions.
+
+**Prerequisites:**
+- Kimi WebBridge daemon running (`kimi-webbridge start`)
+- `OPENROUTER_API_KEY` set in `.env`
+
+```bash
+# Basic extraction (summary + Delta/Gamma tables)
+python scripts/dhan_dex_agent.py
+
+# Also compute GEX_DEX_ALIGNED strikes
+python scripts/dhan_dex_agent.py --strike-selection
+```
+
+| Option | Default | Description |
+|---|---|---|
+| (none) | — | Runs the full 7-step deterministic workflow |
+| `--strike-selection` | false | Also compute GEX/DEX-aligned strike recommendations |
+
+**Determinism guarantees:**
+- No exploration — uses exact selectors defined in `DhanDexAgent.pid.md`
+- No retries — each step attempted exactly once; on failure, terminates with a structured error code
+- No branching — steps execute in fixed order (0→7)
+- No state mutation — does not place orders or modify config files
+- Idempotent — same session state produces the same output
+- LLM calls use `temperature=0.0` for deterministic output
+
+See `DhanDexAgent.pid.md` for the complete process definition with error codes and step-by-step curl commands.
+
+---
+
 ## 📈 Backtesting
 
 ```bash
@@ -396,6 +441,17 @@ Kimi WebBridge page targets and extraction selectors for the Dhan Dext dashboard
 
 ```
 orb-nifty/
+├── .env.example                 # Credential template
+├── .gitignore
+├── AGENT.md                     # Agent instructions
+├── CLAUDE.md                    # Claude-specific instructions
+├── GEMINI.md                    # Gemini-specific instructions
+├── README.md
+├── base.md                      # Base documentation
+├── plan_improvement.md          # Improvement plan notes
+├── requirements.txt
+├── run_dashboard.py             # Dashboard launcher (auto-detects venv)
+├── webbridge_req.json           # WebBridge request template
 ├── config/
 │   ├── scoring_rules.yaml       # Feature weights & regime overrides
 │   ├── strike_rules.yaml        # Strike selection rules & lot sizes
@@ -405,61 +461,83 @@ orb-nifty/
 │   ├── osse_architecture.md
 │   └── PRD_DEX_VP_OSSE_v3_consistent.md
 ├── scripts/
+│   ├── dhan_dex_agent.py        # Deterministic Dhan DEX extraction agent (PID: DHAN-DEX-AGENT-v1)
 │   ├── run_exposure_agent.py    # CLI for live DEX/GEX strike selection
 │   ├── run_30d_backtest.py
 │   ├── run_1y_backtest.py
 │   ├── run_2y_full_rules_backtest.py
 │   ├── fetch_history_job.py
+│   ├── analyze_reversals_and_trades.py
+│   ├── audit_intraday_vs_daily.py
+│   ├── audit_zeros.py
+│   ├── compare_3_rules_backtest.py
+│   ├── compare_rules_2_and_3.py
+│   ├── test_rules_breakdown.py
 │   ├── init_osse_db.sql         # PostgreSQL schema
-│   └── dhan_mcp/                # Node.js Playwright auth + extraction scripts
+│   ├── dhan_mcp/                # Node.js Playwright auth + extraction scripts
+│   │   ├── auth_manager.js
+│   │   ├── extract_chart_data.js
+│   │   ├── extract_option_chain.js
+│   │   ├── extract_portfolio.js
+│   │   └── place_order.js
 ├── src/osse/
+│   ├── __init__.py
 │   ├── api/app.py               # FastAPI REST API (7 endpoints)
+│   ├── config_validator.py      # YAML config validation at startup
 │   ├── dashboard/app.py         # Streamlit dashboard
 │   ├── agent/
+│   │   ├── __init__.py
 │   │   └── exposure_agent.py    # DhanExposureAgent (WebBridge → strikes)
 │   ├── analysis/
+│   │   ├── __init__.py
 │   │   ├── ai_chart_explainer.py
 │   │   └── correlation.py
 │   ├── backtest/
+│   │   ├── __init__.py
 │   │   ├── engine.py
 │   │   ├── metrics.py
 │   │   └── simulation.py
 │   ├── data/
-│   │   ├── collector.py         # Dhan/yfinance OHLCV fetcher
+│   │   ├── __init__.py
 │   │   ├── chrome_collector.py  # Chrome DevTools data collector
-│   │   ├── webbridge_collector.py
+│   │   ├── collector.py         # Dhan/yfinance OHLCV fetcher
 │   │   ├── dhan_mcp.py          # Playwright-backed Dhan collector
+│   │   ├── db.py                # Parquet / PostgreSQL persistence
 │   │   ├── dom_parser.py
 │   │   ├── greeks_parser.py
-│   │   ├── db.py                # Parquet / PostgreSQL persistence
-│   │   └── validator.py
+│   │   ├── validator.py         # Data validation before scoring
+│   │   └── webbridge_collector.py
 │   ├── engine/
-│   │   ├── scorer.py            # ScoringEngine (13 features → 0-100)
-│   │   ├── normalizer.py        # Bounded normalization
-│   │   ├── decision.py          # DecisionEngine + pros/cons generator
+│   │   ├── __init__.py
 │   │   ├── confluence.py        # DEX + VP confluence scoring
-│   │   ├── strategy_variants.py # Tier-based variant selector
+│   │   ├── decision.py          # DecisionEngine + pros/cons generator
 │   │   ├── dex_calculator.py
 │   │   ├── gamma_calculator.py
-│   │   └── risk_manager.py
+│   │   ├── normalizer.py        # Bounded normalization
+│   │   ├── risk_manager.py
+│   │   ├── scorer.py            # ScoringEngine (13 features → 0-100)
+│   │   └── strategy_variants.py # Tier-based variant selector
 │   ├── features/
-│   │   ├── indicators.py        # TA-Lib wrapper (EMA, ADX, ATR, RSI, VWAP)
+│   │   ├── __init__.py
 │   │   ├── engineering.py       # 13-feature extraction
+│   │   ├── indicators.py        # TA-Lib wrapper (EMA, ADX, ATR, RSI, VWAP)
 │   │   ├── orb_builder.py       # 09:15–09:30 ORB stats
 │   │   └── volume_profile.py    # 70% Value Area (POC, VAH, VAL, HVN, LVN)
 │   ├── monitoring/
-│   │   ├── scheduler.py         # APScheduler market-hours poller
-│   │   └── insights.py          # Signal alerts from live chain data
+│   │   ├── __init__.py
+│   │   ├── insights.py          # Signal alerts from live chain data
+│   │   └── scheduler.py         # APScheduler market-hours poller
 │   ├── options/
-│   │   ├── strike_selector.py   # 5-variant delta-targeted selector
-│   │   ├── synthetic_pricing.py # Black-Scholes pricing
-│   │   └── expiry_manager.py    # NSE/BSE expiry date resolver
+│   │   ├── __init__.py
+│   │   ├── expiry_manager.py    # NSE/BSE expiry date resolver
+│   │   ├── strike_selector.py   # 6-variant strike selector
+│   │   └── synthetic_pricing.py # Black-Scholes pricing
 │   └── reporting/
+│       ├── __init__.py
 │       └── generator.py         # JSON + CSV report exporter
 ├── tests/                       # 18 PyTest test modules
-├── .env.example                 # Credential template
-├── requirements.txt
-└── run_dashboard.py             # Dashboard launcher (auto-detects venv)
+├── DhanDexAgent.pid.md          # Dhan DEX Agent process & determinism document
+└── venv/                        # Python virtual environment
 ```
 
 ---
@@ -475,7 +553,7 @@ Run a specific test module:
 PYTHONPATH=src python -m pytest tests/test_engine.py -v
 ```
 
-18 test modules cover: engine scoring, normalizer, feature extraction, ORB builder, options pricing, strike selector, DEX/GEX calculators, confluence, strategy variants, risk manager, backtest metrics, data collection, API endpoints, Chrome collector, Greeks parser, and the exposure agent.
+18 test modules cover: engine scoring, normalizer, feature extraction, ORB builder, options pricing, strike selector, DEX/GEX calculators, confluence, strategy variants, risk manager, backtest metrics, data collection, API endpoints, Chrome collector, Greeks parser, exposure agent, config validator, and AI chart explainer.
 
 ---
 
@@ -485,9 +563,10 @@ PYTHONPATH=src python -m pytest tests/test_engine.py -v
 - `.env.example` contains only placeholder values — copy it to `.env` and fill in your own keys.
 - All API credentials are read via `os.environ.get(...)` — no hardcoded secrets anywhere in the codebase.
 - If `dhan_client_id` / `dhan_access_token` are empty, the engine silently falls back to `yfinance`.
+- `OPENROUTER_API_KEY` is required for the Dhan DEX Agent CLI and is read from the environment at runtime.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.

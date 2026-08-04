@@ -50,3 +50,40 @@ Unidirectional pipeline — each stage feeds the next; there is no shared mutabl
 - **Monitor polling respects market hours.** The scheduler only polls during Indian equity hours (Mon–Fri 09:15–15:30 IST) unless `DHAN_MONITOR_IGNORE_HOURS=1` is set.
 - **Browser extraction falls back silently.** If Playwright/Dhan web extraction fails or returns invalid data, `DhanMCPCollector` falls back to synthetic option-chain/candle data and logs a warning.
 - Scripts in `scripts/` are throwaway research/backtest harnesses; the CSVs at repo root are their output artifacts, not source data.
+
+## Dhan DEX Agent Workflow (PID: DHAN-DEX-AGENT-v1)
+
+Deterministic agent for extracting Dhan DEX dashboard data via Kimi Web Bridge, with OpenRouter LLM integration for parsing and structuring.
+
+- **PID document**: `DhanDexAgent.pid.md` — defines the process, steps, error codes, and determinism guarantees.
+- **Workflow script**: `scripts/dhan_dex_agent.py` — implements the PID steps in fixed order (0→7), no branching, no retries.
+
+### OpenRouter Configuration
+
+| Field | Value |
+|---|---|
+| **Model** | `link-3.0-flash` |
+| **API Key** | `OPENROUTER_API_KEY` env var |
+| **Base URL** | `https://openrouter.ai/api/v1` |
+| **Temperature** | `0.0` (deterministic) |
+
+Set the key in `.env` or export it before running.
+
+### Usage
+
+```bash
+# Extract summary + Delta/Gamma exposure tables
+python scripts/dhan_dex_agent.py
+
+# Also compute GEX_DEX_ALIGNED strikes
+python scripts/dhan_dex_agent.py --strike-selection
+```
+
+### Determinism Rules
+
+1. No exploration — uses exact selectors defined in the PID.
+2. No retries — each step attempted exactly once; on failure, terminates with a structured error code.
+3. No branching — steps execute in fixed order.
+4. No state mutation — does not place orders or modify config files.
+5. Idempotent — same session state produces the same output.
+6. LLM calls use `temperature=0.0` for deterministic output.
