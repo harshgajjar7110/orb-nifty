@@ -10,24 +10,23 @@ The engine evaluates intraday 1-minute market structure against 13 statistical f
 
 Unidirectional pipeline — each stage feeds the next; no shared mutable state between stages:
 
-1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV + India VIX + CPR. Falls back from DhanHQ to `yfinance` on missing credentials or rate limits. `db.py` persists to Parquet under `data/`; PostgreSQL is optional.
+1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV + India VIX + CPR from three sanctioned sources — bundled internal datasets (offline), `yfinance`, and `jugaad-data`. `db.py` persists to Parquet under `data/`; PostgreSQL is optional.
 2. **Features** (`src/osse/features/`): `indicators.py` (TA-Lib) → `orb_builder.py` (09:15–09:30 ORB stats) → `engineering.py` (13 features, IV Rank, regime detection).
 3. **Engine** (`src/osse/engine/`): `normalizer.py` → `scorer.py` (weighted sum) → `decision.py` (strategy mapping).
 4. **Options** (`src/osse/options/`): `strike_selector.py` (5 variants), `synthetic_pricing.py` (Black-Scholes), `expiry_manager.py`.
 5. **Outputs**: `api/app.py` (FastAPI), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation).
 
-### Unified Score
+### Score
 
-Unified score = 40% OSSE + 60% Confluence (DEX + Volume Profile confluence).
+The engine outputs the **OSSE Score (0–100)** from the 13 normalized features via `scorer.py`. The earlier DEX / Gamma Exposure (GEX) confluence overlay depended on the removed live option-chain feed (WebBridge / Chrome / DhanMCP) and is no longer part of the shipped engine.
 
 ## Key Invariants
 
 - **Scoring weights are config-driven.** All feature weights and normalization bounds live in `config/scoring_rules.yaml`; strike/lot rules in `config/strike_rules.yaml`. Change tuning there, not in code.
 - **Never mix raw and normalized values in the scorer.** Normalization happens only in `normalizer.py`; `scorer.py` consumes only normalized values.
-- **Secrets from env only.** `dhan_client_id` / `dhan_access_token` via `os.environ.get`. Empty credentials silently fall back to `yfinance`.
+- **Secrets from env only.** PostgreSQL credentials are read via `os.environ.get`. There are no broker or scraper credentials — OSSE does not call any broker API or scrape the web.
 - **The live monitor never trades.** It extracts option-chain data, computes DEX/VP/confluence signals, and surfaces alerts. All execution remains manual.
-- **Monitor polling respects market hours** (Mon–Fri 09:15–15:30 IST) unless `DHAN_MONITOR_IGNORE_HOURS=1` is set.
-- **The Exposure Agent uses WebBridge exclusively.** `DhanMCPCollector` (Playwright) is for historical data only and is not a fallback in the Exposure Agent. If the WebBridge daemon is unreachable, the agent returns an `ERROR` immediately.
+- **Monitor polling respects market hours** (Mon–Fri 09:15–15:30 IST) unless `OSSE_IGNORE_HOURS=1` is set.
 - **`scripts/` are throwaway research/backtest harnesses.** CSVs at repo root are their output artifacts, not source data.
 
 ## Project Structure
@@ -36,25 +35,19 @@ Unified score = 40% OSSE + 60% Confluence (DEX + Volume Profile confluence).
 orb-nifty/
 ├── config/
 │   ├── scoring_rules.yaml       # Feature weights, normalization bounds, regime overrides
-│   ├── strike_rules.yaml        # Strike selection rules, lot sizes, exposure-driven rules
-│   ├── chrome_targets.yaml      # Chrome DevTools extraction targets
-│   └── webbridge_targets.yaml   # WebBridge page targets
+│   └── strike_rules.yaml        # Strike selection rules, lot sizes
 ├── docs/
 │   ├── osse_architecture.md     # Architecture diagram and module definitions
 │   └── PRD_DEX_VP_OSSE_v3_consistent.md
 ├── scripts/                     # Throwaway research/backtest harnesses
-│   ├── run_exposure_agent.py
 │   ├── run_30d_backtest.py
 │   ├── run_1y_backtest.py
 │   ├── run_2y_full_rules_backtest.py
 │   ├── fetch_history_job.py
-│   ├── init_osse_db.sql
-│   └── dhan_mcp/                # Node.js Playwright auth + extraction scripts
+│   └── init_osse_db.sql
 ├── src/osse/
-│   ├── api/app.py               # FastAPI REST API (7 endpoints)
+│   ├── api/app.py               # FastAPI REST API (/api/v1/score)
 │   ├── dashboard/app.py         # Streamlit dashboard
-│   ├── agent/
-│   │   └── exposure_agent.py    # DhanExposureAgent (WebBridge → strikes)
 │   ├── analysis/
 │   │   ├── ai_chart_explainer.py
 │   │   └── correlation.py
@@ -63,39 +56,22 @@ orb-nifty/
 │   │   ├── metrics.py
 │   │   └── simulation.py
 │   ├── data/
-│   │   ├── collector.py         # Dhan/yfinance OHLCV fetcher
-│   │   ├── chrome_collector.py  # Chrome DevTools data collector
-│   │   ├── webbridge_collector.py
-│   │   ├── dhan_mcp.py          # Playwright-backed Dhan collector
-│   │   ├── dom_parser.py
-│   │   ├── greeks_parser.py
+│   │   ├── collector.py         # yfinance + jugaad + internal dataset fetcher
 │   │   ├── db.py                # Parquet / PostgreSQL persistence
 │   │   └── validator.py
 │   ├── engine/
 │   │   ├── scorer.py            # ScoringEngine (13 features → 0-100)
 │   │   ├── normalizer.py        # Bounded normalization
-│   │   ├── decision.py          # DecisionEngine + pros/cons generator
-│   │   ├── confluence.py        # DEX + VP confluence scoring
-│   │   ├── strategy_variants.py # Tier-based variant selector
-│   │   ├── dex_calculator.py
-│   │   ├── gamma_calculator.py
-│   │   └── risk_manager.py
+│   │   └── decision.py          # DecisionEngine + pros/cons generator
 │   ├── features/
 │   │   ├── indicators.py        # TA-Lib wrapper (EMA, ADX, ATR, RSI, VWAP)
 │   │   ├── engineering.py       # 13-feature extraction
-│   │   ├── orb_builder.py       # 09:15–09:30 ORB stats
+│   │   ├── orb_builder.py        # 09:15–09:30 ORB stats
 │   │   └── volume_profile.py    # 70% Value Area (POC, VAH, VAL, HVN, LVN)
-│   ├── monitoring/
-│   │   ├── scheduler.py         # APScheduler market-hours poller
-│   │   └── insights.py          # Signal alerts from live chain data
-│   ├── options/
-│   │   ├── strike_selector.py   # 5-variant delta-targeted selector
-│   │   ├── synthetic_pricing.py # Black-Scholes pricing
-│   │   └── expiry_manager.py    # NSE/BSE expiry date resolver
 │   └── reporting/
 │       └── generator.py         # JSON + CSV report exporter
-├── tests/                       # 18 PyTest test modules
-├── .env.example                 # Credential template
+├── tests/                       # PyTest test modules
+├── .env.example                 # Credential template (Postgres only)
 ├── requirements.txt
 └── run_dashboard.py             # Dashboard launcher (auto-detects venv)
 ```
@@ -133,12 +109,6 @@ Controls strike selection per symbol and strategy. Key sections:
 - `symbols` — per-index `step_size`, `lot_size`, `default_otm_steps`
 - `delta_targets` — short/long leg delta bounds for credit spreads, debit spreads, straddles
 - `premium_targets` — premium % of spot bounds for credit spreads
-- `dex_vp_strategy_rules` — Value Area %, risk limits, confluence tier thresholds
-- `exposure_driven_rules` — GEX/DEX aligned variant config and priority ordering for support/resistance anchors
-
-### `config/chrome_targets.yaml` / `config/webbridge_targets.yaml`
-
-Chrome DevTools MCP and Kimi WebBridge page targets and extraction selectors for the Dhan dashboard.
 
 ## Scoring Pipeline Detail
 
@@ -187,29 +157,22 @@ Score tiers:
 
 Strategy recommendation maps score + IV Rank + regime to: Directional Credit Spread, Directional Debit Spread, Iron Condor / Short Strangle, Short Straddle / Iron Fly, or No Trade.
 
-### Confluence Engine (`confluence.py`)
+### Strike Selection & Expiry (`decision.py`)
 
-Combines DEX walls/flips with Volume Profile (POC, VAH, VAL, HVN, LVN) into a Confluence Score (0–100). Alignment rules R1–R6 provide strike guidance. Unified Score = 40% OSSE + 60% Confluence.
+Strike legs are built by `DecisionEngine` using delta-targeted / moneyness logic with a synthetic Black-Scholes backdrop. Variants supported: `DELTA_TARGETED`, `MONEYNESS`, `OI_WALL`, `EXPECTED_MOVE`, `PREMIUM_TARGETED`, and `CPR_PIVOT`. Weekly / Next-Weekly / Monthly expiry metadata is resolved inline.
 
-### Strike Selection (`strike_selector.py`)
-
-5 variants:
-1. `MONEYNESS` — fixed OTM steps from ATM
-2. `DELTA_TARGETED` — legs anchored to target delta (default)
-3. `OI_WALL` — positioned at OI walls
-4. `EXPECTED_MOVE` / `PREMIUM_TARGETED — strikes at 1-SD expected move boundary or premium % of spot
-5. `CPR_PIVOT` — anchored to CPR boundaries
-6. `GEX_DEX_ALIGNED` — anchored to live exposure structural levels (WebBridge-driven)
+> The earlier DEX / Gamma Exposure (GEX) confluence engine and the `GEX_DEX_ALIGNED` variant depended on the live option-chain feed (WebBridge / Chrome / DhanMCP) and were retired with those collectors.
 
 ## Key Technologies
 
 - **Python 3.11** — primary language
 - **TA-Lib** — technical indicators (with pandas/numpy fallback)
-- **FastAPI** — REST API (`POST /api/v1/score`, `/api/v1/dex`, `/api/v1/volume-profile`, `/api/v1/confluence`, `/api/v1/strategy-variants`, `/api/v1/explain`, `/api/v1/exposure-strikes`)
+- **FastAPI** — REST API (`POST /api/v1/score`)
 - **Streamlit** — dashboard (http://localhost:8501)
-- **PyTest** — 18 test modules, no `conftest.py` or `pytest.ini`
+- **PyTest** — test modules under `tests/`, no `conftest.py` or `pytest.ini`
 - **pandas, numpy, scipy, pyyaml, python-dotenv** — core dependencies
-- **dhanhq** — Dhan API SDK (optional, falls back to yfinance)
+- **yfinance** — primary network data source (OHLCV, VIX)
+- **jugaad-data** — Indian-market daily history fallback
 - **Parquet** — local persistence under `data/`
 - **PostgreSQL** — optional backend (`scripts/init_osse_db.sql`)
 
@@ -217,7 +180,7 @@ Combines DEX walls/flips with Volume Profile (POC, VAH, VAL, HVN, LVN) into a Co
 
 - No `setup.py`/`pyproject` — package lives under `src/`. Set `PYTHONPATH=src` for imports, or activate `venv/`.
 - TA-Lib on Windows: pre-built wheel at `TA_Lib-0.4.28-cp311-cp311-win_amd64.whl` (Python 3.11 only).
-- Credentials: copy `.env.example` to `.env` and fill in values. Empty `dhan_client_id` / `dhan_access_token` silently falls back to `yfinance`.
+- Credentials: copy `.env.example` to `.env`. The engine runs without any credentials — only fill in the optional PostgreSQL block if you want the Postgres backend. There are no broker or scraper credentials.
 
 ## Commands
 

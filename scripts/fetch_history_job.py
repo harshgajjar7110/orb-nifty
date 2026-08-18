@@ -46,22 +46,23 @@ def run_historical_job_batch(days=365, symbol="^NSEI", sl_buffer_pct=0.003):
     end_dt = datetime.now()
     start_dt = end_dt - timedelta(days=days)
     
-    # 2. Fetch 1 year of daily data for context (to avoid 365 API calls)
+    # 2. Fetch up to 1 year of daily data for context (to avoid 365 API calls).
+    #    Source: Y Finance (yfinance) — no broker/DhanHQ dependency.
     try:
-        dhan = DataCollector._get_dhan_client()
-        mapping = DataCollector.SYMBOL_MAP[symbol]
-        daily_response = dhan.historical_daily_data(
-            security_id=mapping["security_id"],
-            exchange_segment=mapping["exchange_segment"],
-            instrument_type=mapping["instrument_type"],
-            expiry_code=0,
-            from_date=(start_dt - timedelta(days=30)).strftime("%Y-%m-%d"), # Extra history for daily context
-            to_date=end_dt.strftime("%Y-%m-%d")
+        import yfinance as yf
+
+        yf_symbol = DataCollector._yfinance_symbol(symbol)
+        raw_daily = yf.Ticker(yf_symbol).history(
+            start=(start_dt - timedelta(days=30)).strftime("%Y-%m-%d"),  # Extra history for daily context
+            end=end_dt.strftime("%Y-%m-%d"),
+            interval="1d",
         )
-        daily_df_full = DataCollector._convert_dhan_response_to_df(daily_response)
+        daily_df_full = raw_daily[["Open", "High", "Low", "Close", "Volume"]].copy()
+        daily_df_full.index.name = "Datetime"
         daily_df_full['date_str'] = daily_df_full.index.strftime('%Y-%m-%d')
     except Exception as e:
         logger.error(f"Failed to fetch daily history: {e}")
+        daily_df_full = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
     chunk_days = 30
     current_start = start_dt
     

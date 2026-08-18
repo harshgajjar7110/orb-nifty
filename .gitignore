@@ -36,10 +36,16 @@ data/*.csv
 Thumbs.db
 
 # Kilo Agent Manager (node_modules + worktrees)
-.kilo/node_modules/
-.kilo/worktrees/
+.kilo/**
 
-# Backtest CSV Artifacts & WebBridge Request Payloads
+# Backtest CSV Artifacts
 1y_enhanced_backtest_results.csv
 30d_backtest_audit_results.csv
-webbridge_req.json
+
+# Development/Analysis files (do not commit)
+inspect_parquet.py
+scripts/resample_nifty_15min.py
+NIFTY 50.csv
+
+# Strategy development directory
+strats/

@@ -30,15 +30,14 @@ Note: TA-Lib on Windows installs from the checked-in wheel `TA_Lib-0.4.28-cp311-
 
 Unidirectional pipeline — each stage feeds the next; there is no shared mutable state between stages:
 
-1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV, India VIX (`^INDIAVIX`), and daily CPR context. Data source falls back from DhanHQ to `yfinance` on rate limits or missing credentials. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
+1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV, India VIX (`^INDIAVIX`), and daily CPR context from three sanctioned sources — bundled internal datasets (offline), `yfinance`, and `jugaad-data`. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
 2. **Features** (`src/osse/features/`): `indicators.py` (TA-Lib: EMA 20/50/200, ATR, VWAP, RSI, ADX, BBands) → `orb_builder.py` (isolates the 09:15–09:30 window: ORB high/low, width, candle efficiency) → `engineering.py` (rolling stats, IV Rank/Percentile from 1y VIX, higher-timeframe alignment vs daily 20 EMA, regime detection).
 3. **Engine** (`src/osse/engine/`): `normalizer.py` scales raw features → `scorer.py` applies weighted sum → `decision.py` maps score + IV Rank + regime to a strategy (credit spread, debit spread, iron condor, straddle, or NO TRADE).
-4. **Options** (`src/osse/options/`): `strike_selector.py` (step/lot sizes from `config/strike_rules.yaml`), `synthetic_pricing.py` (Black-Scholes), `expiry_manager.py`.
-5. **Outputs**: `api/app.py` (FastAPI, `POST /api/v1/score`), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation with Win Rate, MFE/MAE metrics).
+4. **Outputs**: `api/app.py` (FastAPI, `POST /api/v1/score`), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation with Win Rate, MFE/MAE metrics).
 
 ## Key Invariants
 
 - **Scoring weights are config-driven.** All feature weights and normalization bounds live in `config/scoring_rules.yaml`; strike/lot rules in `config/strike_rules.yaml`. Change tuning there, not in code.
 - **Never mix raw and normalized values in the scorer.** Normalization happens only in `normalizer.py` per the `normalization:` mode declared in the YAML (`bounded`, `min_max`, etc.); `scorer.py` consumes only normalized values.
-- **Secrets come from env only** — `dhan_client_id` / `dhan_access_token` via `os.environ.get` (`.env` loaded with dotenv). Empty credentials must silently fall back to yfinance.
+- **Secrets come from env only** — PostgreSQL credentials via `os.environ.get` (`.env` loaded with dotenv). The engine performs no broker API calls and no web scraping, so no broker/scraper credentials exist.
 - Scripts in `scripts/` are throwaway research/backtest harnesses; the CSVs at repo root are their output artifacts, not source data.

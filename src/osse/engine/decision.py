@@ -64,16 +64,10 @@ class DecisionEngine:
         spot_price: float = None,
         option_chain: dict = None,
         daily_context: dict = None,
-        symbol: str = "NIFTY",
-        variant: str = "DELTA_TARGETED",
-        direction: str = "UP",
-        vix: float = 15.0,
-        dex_data: dict = None,
-        vp_data: dict = None
+        symbol: str = "NIFTY"
     ) -> dict:
         """
-        Interprets score and returns confidence, decision, strategy recommendation,
-        quantitative strike legs calculation, and DEX + VP confluence evaluation.
+        Interprets score and returns confidence, decision, and strategy recommendation.
         """
         thresholds = DecisionEngine._get_thresholds()
         strategy = DecisionEngine.get_strategy_recommendation(score, regime, iv_rank)
@@ -90,62 +84,6 @@ class DecisionEngine:
             res = {"confidence": "Weak", "decision": "NO TRADE", "recommended_strategy": strategy}
         else:
             res = {"confidence": "Reject", "decision": "NO TRADE", "recommended_strategy": strategy}
-
-        # Confluence & Strategy Variants Evaluation if DEX/VP data is available
-        if dex_data or vp_data:
-            try:
-                from osse.engine.confluence import ConfluenceEngine
-                from osse.engine.strategy_variants import StrategyVariantSelector
-
-                step_size = 100.0 if symbol.upper() == "BANKNIFTY" else 50.0
-                conf_engine = ConfluenceEngine(step_size=step_size)
-
-                dex_info = dex_data or {}
-                vp_info = vp_data or {}
-                s_price = spot_price or 24500.0
-
-                conf_res = conf_engine.calculate_confluence_score(
-                    dex_data=dex_info,
-                    vp_data=vp_info,
-                    spot_price=s_price
-                )
-                unified_res = conf_engine.calculate_unified_score(
-                    osse_score=score,
-                    confluence_score=conf_res.get("confluence_score", 0.0)
-                )
-
-                variant_selector = StrategyVariantSelector(symbol=symbol, step_size=step_size)
-                variants = variant_selector.select_variants(
-                    spot_price=s_price,
-                    confluence_data=conf_res,
-                    dex_data=dex_info,
-                    vp_data=vp_info,
-                    osse_score=score,
-                    vix=vix
-                )
-
-                res["confluence"] = conf_res
-                res["unified_score"] = unified_res
-                res["strategy_variants"] = variants
-            except Exception as e:
-                res["confluence_error"] = str(e)
-
-        if spot_price and spot_price > 0 and res["decision"] != "NO TRADE":
-            try:
-                from osse.options.strike_selector import StrikeSelector
-                selector = StrikeSelector()
-                res["strike_recommendation"] = selector.select_strikes(
-                    strategy_name=strategy,
-                    spot_price=spot_price,
-                    option_chain=option_chain,
-                    daily_context=daily_context,
-                    symbol=symbol,
-                    variant=variant,
-                    direction=direction,
-                    vix=vix
-                )
-            except Exception as e:
-                res["strike_recommendation_error"] = str(e)
 
         return res
 

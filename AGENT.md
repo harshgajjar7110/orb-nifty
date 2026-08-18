@@ -22,10 +22,6 @@ PYTHONPATH=src python -m uvicorn osse.api.app:app --host 0.0.0.0 --port 8000
 
 # Backtests / audits (ad-hoc research scripts, each writes CSVs to repo root)
 PYTHONPATH=src python scripts/run_1y_backtest.py
-
-# Dhan option-chain live monitor (single poll or background scheduler)
-PYTHONPATH=src python src/osse/monitoring/scheduler.py --once --ignore-hours
-PYTHONPATH=src python src/osse/monitoring/scheduler.py --symbols NIFTY,BANKNIFTY --interval 180
 ```
 
 Note: TA-Lib on Windows installs from the checked-in wheel `TA_Lib-0.4.28-cp311-cp311-win_amd64.whl` (Python 3.11 only).
@@ -34,56 +30,14 @@ Note: TA-Lib on Windows installs from the checked-in wheel `TA_Lib-0.4.28-cp311-
 
 Unidirectional pipeline — each stage feeds the next; there is no shared mutable state between stages:
 
-1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV, India VIX (`^INDIAVIX`), and daily CPR context. Data source falls back from DhanHQ to `yfinance` on rate limits or missing credentials. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
+1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV, India VIX (`^INDIAVIX`), and daily CPR context from three sanctioned sources — bundled internal datasets (offline), `yfinance`, and `jugaad-data`. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
 2. **Features** (`src/osse/features/`): `indicators.py` (TA-Lib: EMA 20/50/200, ATR, VWAP, RSI, ADX, BBands) → `orb_builder.py` (isolates the 09:15–09:30 window: ORB high/low, width, candle efficiency) → `engineering.py` (rolling stats, IV Rank/Percentile from 1y VIX, higher-timeframe alignment vs daily 20 EMA, regime detection).
 3. **Engine** (`src/osse/engine/`): `normalizer.py` scales raw features → `scorer.py` applies weighted sum → `decision.py` maps score + IV Rank + regime to a strategy (credit spread, debit spread, iron condor, straddle, or NO TRADE).
-4. **Options** (`src/osse/options/`): `strike_selector.py` (step/lot sizes from `config/strike_rules.yaml`), `synthetic_pricing.py` (Black-Scholes), `expiry_manager.py`.
-5. **Outputs**: `api/app.py` (FastAPI, `POST /api/v1/score`), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation with Win Rate, MFE/MAE metrics).
+4. **Outputs**: `api/app.py` (FastAPI, `POST /api/v1/score`), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation with Win Rate, MFE/MAE metrics).
 
 ## Key Invariants
 
 - **Scoring weights are config-driven.** All feature weights and normalization bounds live in `config/scoring_rules.yaml`; strike/lot rules in `config/strike_rules.yaml`. Change tuning there, not in code.
 - **Never mix raw and normalized values in the scorer.** Normalization happens only in `normalizer.py` per the `normalization:` mode declared in the YAML (`bounded`, `min_max`, etc.); `scorer.py` consumes only normalized values.
-- **Secrets come from env only** — `dhan_client_id` / `dhan_access_token` via `os.environ.get` (`.env` loaded with dotenv). Empty credentials must silently fall back to yfinance.
-- **Monitor credentials are env-only too.** Dhan web login (`DHAN_CLIENT_ID`, `DHAN_PASSWORD`) is used only by the Node Playwright scripts; credentials are never persisted to the repo.
-- **The live monitor never trades.** It extracts option-chain data, computes DEX/VP/confluence signals, and surfaces alerts in Streamlit. All execution remains manual.
-- **Monitor polling respects market hours.** The scheduler only polls during Indian equity hours (Mon–Fri 09:15–15:30 IST) unless `DHAN_MONITOR_IGNORE_HOURS=1` is set.
-- **Browser extraction falls back silently.** If Playwright/Dhan web extraction fails or returns invalid data, `DhanMCPCollector` falls back to synthetic option-chain/candle data and logs a warning.
+- **Secrets come from env only** — PostgreSQL credentials via `os.environ.get` (`.env` loaded with dotenv). The engine performs no broker API calls and no web scraping, so no broker/scraper credentials exist.
 - Scripts in `scripts/` are throwaway research/backtest harnesses; the CSVs at repo root are their output artifacts, not source data.
-
-## Dhan DEX Agent Workflow (PID: DHAN-DEX-AGENT-v1)
-
-Deterministic agent for extracting Dhan DEX dashboard data via Kimi Web Bridge, with OpenRouter LLM integration for parsing and structuring.
-
-- **PID document**: `DhanDexAgent.pid.md` — defines the process, steps, error codes, and determinism guarantees.
-- **Workflow script**: `scripts/dhan_dex_agent.py` — implements the PID steps in fixed order (0→7), no branching, no retries.
-
-### OpenRouter Configuration
-
-| Field | Value |
-|---|---|
-| **Model** | `link-3.0-flash` |
-| **API Key** | `OPENROUTER_API_KEY` env var |
-| **Base URL** | `https://openrouter.ai/api/v1` |
-| **Temperature** | `0.0` (deterministic) |
-
-Set the key in `.env` or export it before running.
-
-### Usage
-
-```bash
-# Extract summary + Delta/Gamma exposure tables
-python scripts/dhan_dex_agent.py
-
-# Also compute GEX_DEX_ALIGNED strikes
-python scripts/dhan_dex_agent.py --strike-selection
-```
-
-### Determinism Rules
-
-1. No exploration — uses exact selectors defined in the PID.
-2. No retries — each step attempted exactly once; on failure, terminates with a structured error code.
-3. No branching — steps execute in fixed order.
-4. No state mutation — does not place orders or modify config files.
-5. Idempotent — same session state produces the same output.
-6. LLM calls use `temperature=0.0` for deterministic output.

@@ -18,8 +18,8 @@ When DEX positioning aligns with Volume Profile Value Area boundaries, strike se
 
 ### 1.3 Integration Context
 - **Existing Asset:** OSSE repository (FastAPI + Streamlit, Black-Scholes Greeks, strike selection, backtesting). The prototype has core modules implemented and unit-tested.
-- **Data Sources:** DhanHQ REST API → `yfinance` fallback for OHLCV/VIX; NSE India option-chain page via planned Chrome DevTools/MCP bridge; synthetic option-chain generator for offline testing.
-- **AI Layer:** Currently a template-based chart explainer (`analysis/ai_chart_explainer.py`). External LLM/Kimi integration is a **Phase 2 roadmap item**, not implemented.
+- **Data Sources:** Bundled internal datasets (offline), `yfinance` (primary network source for OHLCV/VIX), and `jugaad-data` (Indian-market daily history fallback). The DhanHQ REST API and any Chrome DevTools / Kimi WebBridge / DhanMCP browser collectors have been removed.
+- **AI Layer:** Currently a template-based chart explainer (`analysis/ai_chart_explainer.py`). External LLM integration is a **Phase 2 roadmap item**, not implemented.
 - **Target Users:** Retail option sellers, prop-desk analysts, SEBI-registered RAs, algo-strategy developers.
 
 ### 1.4 Current State vs. Vision
@@ -31,14 +31,14 @@ When DEX positioning aligns with Volume Profile Value Area boundaries, strike se
 | Confluence engine | Implemented, but weights **hardcoded**; config exists but is ignored | Make fully config-driven |
 | Strategy variants | 5 variants implemented, unit-tested | Add AI calibration layer |
 | Risk manager | Implemented (sizing, drawdown, stops, hedges), unit-tested | Wire into live monitoring |
-| MCP/Chrome automation | `DhanMCPCollector` reads JSON files only; Node scripts exist but not invoked from Python | Full browser automation bridge |
-| Kimi/LLM brain | Template explainer only | Integrated reasoning engine |
+| MCP/Chrome automation | **Removed** — DhanMCPCollector, WebBridge, and Chrome collectors retired | n/a |
+| Reasoning overlay | Template explainer only | Integrated reasoning engine |
 | Live execution | **Not implemented by design** | One-tap order links + human confirmation |
 | PostgreSQL | Schema exists, not used by code | Optional production sink |
 
 ### 1.5 Expected Outcome
 A deployable **research and recommendation system** that:
-1. Ingests market data via DhanHQ/yfinance (and eventually Chrome/MCP).
+1. Ingests market data via `yfinance` / `jugaad-data` and bundled internal datasets.
 2. Computes OSSE score, DEX, Volume Profile, and confluence deterministically.
 3. Outputs 3–5 strategy variants per session with pre-calculated strikes, Greeks, and risk metrics.
 4. Presents results via FastAPI and Streamlit with human-readable explanations.
@@ -62,7 +62,7 @@ A deployable **research and recommendation system** that:
 | **Credit Spread** | Sell ATM/ITM option + Buy further OTM option; capped risk, directional bias. |
 | **OSSE** | ORB Strength Score Engine — existing quantitative repository with ORB, CPR, VWAP, EMA, RSI, ATR scoring. |
 | **MCP** | Model Context Protocol — open standard for AI-to-tool communication. Planned for future browser automation integration. |
-| **Kimi AI** | External reasoning engine planned as future strategy brain. Not currently wired. |
+| **Reasoning overlay** | External reasoning engine planned as future strategy brain. Not currently wired. |
 | **ORB** | Opening Range Breakout — 15-minute range (9:15–9:30 AM IST) for directional bias. |
 
 ---
@@ -98,8 +98,8 @@ A deployable **research and recommendation system** that:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                     LAYER 4: DATA COLLECTION                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐   │
-│  │ DhanHQ REST │  │ yfinance    │  │ Chrome/MCP  │  │ Synthetic       │   │
-│  │ (Primary)   │  │ (Fallback)  │  │ (Planned)   │  │ (Offline tests) │   │
+│  │ Internal    │  │ yfinance    │  │ jugaad-data │  │ Synthetic       │   │
+│  │ datasets    │  │ (Network)   │  │ (Fallback)  │  │ (Offline tests) │   │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -107,8 +107,8 @@ A deployable **research and recommendation system** that:
 ### 3.2 Actual Implementation Boundaries
 
 - **No live order execution.** The system generates recommendations, order previews, and (future) one-tap broker URLs. Humans execute.
-- **No real-time WebSocket feed.** Data is polled via DhanHQ REST or yfinance.
-- **No active MCP host/server.** Chrome DevTools/MCP scripts exist but are not invoked from Python.
+- **No real-time WebSocket feed.** Data is fetched on demand from `yfinance` and `jugaad-data`, or loaded from bundled internal datasets.
+- **No broker API dependency and no web scraping.** The DhanHQ REST integration and the Chrome DevTools / Kimi WebBridge / DhanMCP browser collectors have been fully removed.
 - **No external LLM integration.** AI chart explainer is a deterministic string template.
 - **Parquet persistence only.** PostgreSQL schema exists but is unused.
 
@@ -116,28 +116,17 @@ A deployable **research and recommendation system** that:
 
 ## 4. Data Collection Layer
 
-### 4.1 DhanHQ REST + yfinance (Current)
+### 4.1 Data Sources (Current)
 
-`src/osse/data/collector.py` implements the primary data path:
+`src/osse/data/collector.py` implements the data path across three sanctioned sources — **internal datasets** (offline, authoritative), **`yfinance`** (primary network source for OHLCV / VIX), and **`jugaad-data`** (Indian-market daily history fallback). The DhanHQ REST integration and the Chrome DevTools / Kimi WebBridge / DhanMCP browser collectors described in earlier revisions have been **removed**.
 
-| Function | Source | Fallback | Output |
-|----------|--------|----------|--------|
-| Intraday OHLCV | DhanHQ REST | yfinance | 1-min candles |
-| India VIX | `^INDIAVIX` via yfinance | — | VIX time-series |
-| Daily CPR context | DhanHQ EOD / yfinance | Synthetic | CPR pivot, TC, BC |
-| Option chain | DhanHQ REST | Synthetic BS engine | Strikes, OI, IV, LTP |
+| Function | Source (priority order) | Fallback | Output |
+|----------|------------------------|----------|--------|
+| Intraday OHLCV | Internal dataset → `yfinance` | — | 1-min candles |
+| India VIX | `^INDIAVIX` via `yfinance` | Neutral default | VIX time-series |
+| Daily CPR context | Internal dataset → `yfinance` → `jugaad-data` | Synthetic | CPR pivot, TC, BC |
 
-### 4.2 Chrome DevTools / MCP (Planned)
-
-Current artifacts:
-- `config/chrome_targets.yaml` — target definitions for NSE India option chain and Dhan pages.
-- `src/osse/data/chrome_collector.py` — config loader and target manager.
-- `src/osse/data/dom_parser.py` — parsers for NSE option-chain JSON and generic tables.
-- `scripts/dhan_mcp/` — Node scripts for browser automation.
-
-Gap: `DhanMCPCollector` only reads pre-existing JSON files and falls back to synthetic data. No Python code launches the Node MCP server or drives browser automation.
-
-### 4.3 Synthetic Option Chain
+### 4.2 Synthetic Option Chain
 
 `DataCollector.generate_synthetic_option_chain()` creates a full option chain from spot, VIX, and Black-Scholes for offline development and testing. This is the fallback used in unit tests.
 
@@ -295,7 +284,7 @@ Views:
 
 ### 9.2 Target State
 
-Integrate an external reasoning engine (Kimi AI or equivalent) as an optional overlay that:
+Integrate an external reasoning engine (optional overlay) that:
 - Interprets the quantitative signal bundle.
 - Flags anomalies vs. historical distributions.
 - Suggests parameter adjustments.
@@ -311,21 +300,9 @@ Integrate an external reasoning engine (Kimi AI or equivalent) as an optional ov
 
 ---
 
-## 10. MCP / Browser Automation Roadmap
+## 10. Browser Automation (Removed)
 
-### 10.1 Phase A: Local File Bridge (Current)
-- `DhanMCPCollector` reads JSON files produced manually or by Node scripts.
-- Used for development and unit tests.
-
-### 10.2 Phase B: Subprocess Bridge
-- Python launches the Node MCP server as a subprocess.
-- Communicates via STDIO or HTTP.
-- Authenticates Dhan web session, extracts option chain and chart data.
-
-### 10.3 Phase C: Stateless MCP Host (Future)
-- Adopt MCP protocol for tool discovery and routing.
-- Expose Dhan Browser, OSSE Engine, Risk Manager, and Execution as MCP servers.
-- Enable external AI clients (Kimi, Claude, etc.) to call tools.
+The Kimi WebBridge / Chrome DevTools / DhanMCP browser-automation roadmap described in earlier revisions has been **removed**. Market data is now sourced exclusively from `yfinance`, `jugaad-data`, and bundled internal datasets — no headless browser or broker web scraping is used.
 
 ---
 
@@ -359,12 +336,12 @@ Integrate an external reasoning engine (Kimi AI or equivalent) as an optional ov
 | Core engine | Python 3.11+ | Quantitative calculations |
 | Web framework | FastAPI | REST API |
 | Dashboard | Streamlit | UI |
-| Data | pandas, numpy, yfinance, DhanHQ REST | OHLCV, VIX, option chain |
+| Data | pandas, numpy, yfinance, jugaad-data, internal datasets | OHLCV, VIX, CPR context |
 | TA | TA-Lib + pandas fallback | Indicators |
 | Pricing | Black-Scholes (`options/synthetic_pricing.py`) | Greeks, credit-spread pricing |
 | Storage | Parquet (`data/db.py`) | Scores, feature distributions |
-| Browser automation | Playwright / Node MCP scripts | Planned Dhan web extraction |
-| AI | Kimi AI API | Planned reasoning overlay |
+| Browser automation | **Removed** — WebBridge / Chrome / DhanMCP collectors retired | n/a |
+| AI | Template-based explainer (`analysis/ai_chart_explainer.py`) | Deterministic narrative |
 | Alerts | Telegram Bot API | Planned |
 
 ---
@@ -380,7 +357,7 @@ Integrate an external reasoning engine (Kimi AI or equivalent) as an optional ov
 
 ### 13.2 Security
 
-- Secrets via environment variables only (`dhan_client_id`, `dhan_access_token`).
+- Secrets via environment variables only (PostgreSQL credentials). No broker or scraper credentials exist.
 - `.env` excluded from version control.
 - Credentials masked in logs.
 - MCP/AI layer must use TLS and scoped tokens if deployed remotely.
@@ -402,22 +379,22 @@ Integrate an external reasoning engine (Kimi AI or equivalent) as an optional ov
 - [ ] Wire `analysis/ai_chart_explainer.py` into dashboard and API.
 - [ ] Unify input/output keys between explainer and decision engine.
 
-### Phase 3: MCP / Browser Automation (Week 5–8)
-- [ ] Implement Python subprocess bridge to Node MCP server.
-- [ ] Authenticate Dhan web session and extract option chain.
-- [ ] Extract chart data and market depth via browser/API interception.
-- [ ] Add fallback to DhanHQ REST / yfinance on automation failure.
+### Phase 3: Data Sourcing & Offline Support (Week 5–8)
+- [ ] Expand bundled internal datasets and document their schema.
+- [ ] Harden `yfinance` / `jugaad-data` fallback ordering and rate-limit handling.
+- [ ] Add CSV/Parquet ingestion for user-provided historical data.
+- [ ] Document the supported symbol → source mapping.
 
 ### Phase 4: AI Integration (Week 9–12)
 - [ ] Design prompt templates for signal interpretation, anomaly detection, regime classification.
-- [ ] Integrate Kimi AI API as optional reasoning overlay.
+- [ ] Integrate an optional external reasoning overlay.
 - [ ] Implement explainability and confidence calibration.
 - [ ] Add AI guardrails and fallback to rule-based decisions.
 
 ### Phase 5: Risk & Execution (Week 13–16)
 - [ ] Unify stop-loss / simulation logic across backtest, dashboard, and scripts.
 - [ ] Implement paper trading simulator with realistic slippage.
-- [ ] Add Telegram alerts and one-tap Dhan order URLs.
+- [ ] Add Telegram alerts and one-tap order URLs.
 - [ ] Implement human confirmation gate for any live execution helper.
 
 ### Phase 6: Backtesting & Optimization (Week 17–22)
@@ -469,10 +446,10 @@ Integrate an external reasoning engine (Kimi AI or equivalent) as an optional ov
 - DEX/VP/Confluence: `src/osse/engine/dex_calculator.py`, `src/osse/features/volume_profile.py`, `src/osse/engine/confluence.py`
 - Strategy/Risk: `src/osse/engine/strategy_variants.py`, `src/osse/engine/risk_manager.py`
 - Options: `src/osse/options/strike_selector.py`, `src/osse/options/synthetic_pricing.py`, `src/osse/options/expiry_manager.py`
-- Data: `src/osse/data/collector.py`, `src/osse/data/db.py`, `src/osse/data/chrome_collector.py`, `src/osse/data/dom_parser.py`, `src/osse/data/dhan_mcp.py`
+- Data: `src/osse/data/collector.py`, `src/osse/data/db.py`, `src/osse/data/validator.py`
 - UI/API: `src/osse/dashboard/app.py`, `src/osse/api/app.py`
 - Tests: `tests/`
-- Config: `config/scoring_rules.yaml`, `config/strike_rules.yaml`, `config/chrome_targets.yaml`
+- Config: `config/scoring_rules.yaml`, `config/strike_rules.yaml`
 
 ---
 

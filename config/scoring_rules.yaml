@@ -77,22 +77,7 @@ features:
     min_val: 0.6
     max_val: 0.05
 
-confluence_weights:
-  dex_wall_at_vp_boundary: 40
-  poc_near_dex_flip: 30
-  vah_val_near_dex: 20
-  volume_confirmation: 10
 
-unified_score_weights:
-  osse_score_weight: 0.40
-  confluence_score_weight: 0.60
-
-calibration:
-  osse_score_weight: 0.40
-  confluence_score_weight: 0.60
-  min_score_for_trade: 45.0
-  sl_multiplier: 1.0
-  max_tunable_knobs: 18
 
 decision_thresholds:
   TRADE:

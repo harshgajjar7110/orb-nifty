@@ -12,7 +12,7 @@ This document provides essential context for AI models interacting with this pro
 * **Languages:** Python 3.11
 * **Frameworks & Runtimes:** Streamlit (Interactive Dashboard UI), FastAPI & Uvicorn (REST API), PyTest (Testing).
 * **Databases:** Parquet local persistence under `data/`, Optional PostgreSQL (`scripts/init_osse_db.sql` schema provided).
-* **Key Libraries/Dependencies:** pandas, numpy, TA-Lib (`TA_Lib-0.4.28-cp311-cp311-win_amd64.whl`), scipy (Black-Scholes pricing), yfinance & DhanHQ API (`dhanhq`), Chrome DevTools MCP (`chrome-devtools-mcp`), plotly, pyyaml, python-dotenv.
+* **Key Libraries/Dependencies:** pandas, numpy, TA-Lib (`TA_Lib-0.4.28-cp311-cp311-win_amd64.whl`), scipy (Black-Scholes pricing), yfinance (OHLCV / VIX), jugaad-data (Indian-market daily history), plotly, pyyaml, python-dotenv.
 * **Package Manager(s):** `pip` (Virtual Environment in `venv/`).
 
 ## 3. Architectural Patterns
@@ -34,7 +34,7 @@ This document provides essential context for AI models interacting with this pro
     * `constants`: `ALL_CAPS` (e.g., `DEFAULT_NIFTY_LOT_SIZE`)
     * `config files`: `kebab-case` / `snake_case` `.yaml`
 * **API Design:** RESTful API via FastAPI with Pydantic payload validation (`POST /api/v1/score`). Returns JSON response containing numeric OSSE scores, feature contributions, and strategy recommendations.
-* **Error Handling:** Graceful fallback mechanism. If primary broker data (DhanHQ) encounters API errors or missing credentials, the pipeline silently falls back to `yfinance` data without breaking execution.
+* **Error Handling:** Graceful fallback mechanism. Market data is sourced from bundled internal datasets, then `yfinance`, then `jugaad-data`; a missing network source never breaks execution.
 
 ## 5. Key Files & Entrypoints
 
@@ -45,7 +45,7 @@ This document provides essential context for AI models interacting with this pro
 * **Configuration:**
     * `config/scoring_rules.yaml` - Feature weights, indicator parameters, normalization limits.
     * `config/strike_rules.yaml` - Strike offset rules, lot sizes, moneyness thresholds.
-    * `.env` / `.env.example` - Credentials for Dhan API and environment settings.
+    * `.env` / `.env.example` - Optional PostgreSQL credentials and environment settings.
 * **CI/CD Pipeline:** Local standard PyTest suite (`python -m pytest`).
 
 ## 6. Development & Testing Workflow
@@ -61,5 +61,5 @@ This document provides essential context for AI models interacting with this pro
 
 * **Config-Driven Architecture:** All scoring weights and normalization parameters MUST remain in `config/scoring_rules.yaml` and `config/strike_rules.yaml`. Do NOT hardcode scoring weights inside Python source code.
 * **Normalization Separation:** Raw metrics must only be normalized inside `src/osse/engine/normalizer.py`. `scorer.py` must only consume normalized values (0–100).
-* **Secrets & Fallback Integrity:** Always use environment variables for API keys (`os.environ.get`). If Dhan API credentials are missing, system MUST gracefully fall back to `yfinance`.
+* **Data Sourcing:** All market data comes from sanctioned sources only — bundled internal datasets, `yfinance`, and `jugaad-data`. There is no broker API dependency and no web scraping. Do not reintroduce DhanHQ or browser/web-fetch collectors.
 * **Imports & Module Paths:** Ensure `src` is in the Python path when importing `osse` modules.

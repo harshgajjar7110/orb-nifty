@@ -39,23 +39,19 @@ class BacktestEngine:
         run_id = f"BT-{symbol}-{start_date}-{str(uuid.uuid4())[:8]}"
         logger.info(f"Starting backtest for {symbol} from {start_date} to {end_date} (Run ID: {run_id})")
         
-        # Fetch a list of trading days using Dhan historical daily data
+        # Fetch a list of trading days using Y Finance daily history.
         try:
-            dhan = DataCollector._get_dhan_client()
-            mapping = DataCollector.SYMBOL_MAP[symbol]
-            response = dhan.historical_daily_data(
-                security_id=mapping["security_id"],
-                exchange_segment=mapping["exchange_segment"],
-                instrument_type=mapping["instrument_type"],
-                expiry_code=0,
-                from_date=start_date,
-                to_date=end_date
+            import yfinance as yf
+
+            yf_symbol = DataCollector._yfinance_symbol(symbol)
+            daily_df = yf.Ticker(yf_symbol).history(
+                start=start_date, end=end_date, interval="1d"
             )
-            daily_df = DataCollector._convert_dhan_response_to_df(response)
             if daily_df.empty:
                 logger.error("No daily data found for the date range.")
                 return []
-            
+
+            daily_df.index.name = "Datetime"
             # Extract unique dates in YYYY-MM-DD format
             trading_days = daily_df.index.strftime('%Y-%m-%d').unique().tolist()
         except Exception as e:
