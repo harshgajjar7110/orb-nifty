@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 # Define Pydantic-like schema validation manually for scoring_rules.yaml
 REQUIRED_SECTIONS = [
     'features',
-    'confluence_weights',
-    'unified_score_weights',
     'regimes'
 ]
 
 REQUIRED_FEATURE_KEYS = [
     'weight', 'normalization', 'min_val', 'max_val'
 ]
+
+VALID_NORMALIZATION_METHODS = ['bounded', 'min_max', 'rolling_z', 'historical_percentile']
 
 def validate_scorer_config(config: dict) -> List[str]:
     """Validate the scorer configuration and return a list of validation errors."""
@@ -42,7 +42,7 @@ def validate_scorer_config(config: dict) -> List[str]:
             
             # Validate normalization method
             norm_method = feature_config.get('normalization', '')
-            if norm_method not in ['bounded', 'min_max', 'rolling_z', 'historical_percentile']:
+            if norm_method not in VALID_NORMALIZATION_METHODS:
                 errors.append(f"Features section: '{feature_name}' has invalid normalization method '{norm_method}'")
             
             # If min_val and max_val are present, validate numeric type
@@ -51,34 +51,9 @@ def validate_scorer_config(config: dict) -> List[str]:
             if not isinstance(feature_config.get('max_val'), (int, float)):
                 errors.append(f"Features section: '{feature_name}' max_val must be numeric")
     
-    # Validate unified_score_weights
-    if 'unified_score_weights' in config:
-        weights = config['unified_score_weights']
-        osse_weight = weights.get('osse_score_weight')
-        confluence_weight = weights.get('confluence_score_weight')
-        if osse_weight is None or confluence_weight is None:
-            errors.append("unified_score_weights missing required keys: 'osse_score_weight', 'confluence_score_weight'")
-        elif not isinstance(osse_weight, (int, float)) or not isinstance(confluence_weight, (int, float)):
-            errors.append("unified_score_weights weights must be numeric")
-        elif osse_weight < 0 or confluence_weight < 0:
-            errors.append("unified_score_weights weights must be non-negative")
-        elif abs(osse_weight + confluence_weight - 1.0) > 0.01:  # Allow small floating point errors
-            errors.append(f"unified_score_weights must sum to 1.0, got osse={osse_weight}, confluence={confluence_weight}")
-    
     # Validate regimes
     if 'regimes' in config and not isinstance(config['regimes'], dict):
         errors.append("regimes must be a mapping")
-    
-    # Validate confluence_weights
-    if 'confluence_weights' in config:
-        weights = config['confluence_weights']
-        required_confluence_keys = ['dex_wall_at_vp_boundary', 'poc_near_dex_flip', 'vah_val_near_dex', 'volume_confirmation']
-        missing = [key for key in required_confluence_keys if key not in weights]
-        if missing:
-            errors.append(f"confluence_weights missing required keys: {', '.join(missing)}")
-        for key, val in weights.items():
-            if not isinstance(val, (int, float)):
-                errors.append(f"confluence_weights values must be integers, found {type(val).__name__} for key '{key}'")
     
     return errors
 

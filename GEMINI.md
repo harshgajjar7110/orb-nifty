@@ -17,10 +17,10 @@ This document provides essential context for AI models interacting with this pro
 
 ## 3. Architectural Patterns
 
-* **Overall Architecture:** Modular Unidirectional Pipeline Architecture. Data flows sequentially through dedicated stages without shared mutable state: Data Collection -> Feature Engineering -> Feature Normalization -> Scorer Engine -> Strategy Decision Engine -> Options Strike & Synthetic Pricing Engine -> Dashboard / REST API / Backtest Engine.
+* **Overall Architecture:** Modular Unidirectional Pipeline Architecture. Data flows sequentially through dedicated stages without shared mutable state: Data Collection -> Feature Engineering -> Feature Normalization -> Scorer Engine -> Strategy Decision Engine -> Dashboard / REST API / Backtest Engine.
 * **Directory Structure Philosophy:**
-    * `/src/osse`: Primary source package containing all engine submodules (`data`, `features`, `engine`, `options`, `backtest`, `analysis`, `api`, `dashboard`, `reporting`).
-    * `/config`: External YAML configuration files (`scoring_rules.yaml`, `strike_rules.yaml`) controlling scoring weights, normalization bounds, and strike selection logic.
+    * `/src/osse`: Primary source package containing all engine submodules (`data`, `features`, `engine`, `backtest`, `analysis`, `api`, `dashboard`, `reporting`).
+    * `/config`: External YAML configuration file (`scoring_rules.yaml`) controlling scoring weights, normalization bounds, and regime overrides.
     * `/scripts`: Research, backtesting, database initialization, and verification harnesses.
     * `/tests`: PyTest test suite covering engine logic, indicators, data pipelines, API endpoints, and options pricing.
     * `/docs`: System architecture documentation and data flow diagrams.
@@ -43,8 +43,7 @@ This document provides essential context for AI models interacting with this pro
     * `src/osse/api/app.py` - FastAPI backend service (`uvicorn osse.api.app:app`).
     * `scripts/run_1y_backtest.py` / `scripts/run_2y_full_rules_backtest.py` - Backtesting execution scripts.
 * **Configuration:**
-    * `config/scoring_rules.yaml` - Feature weights, indicator parameters, normalization limits.
-    * `config/strike_rules.yaml` - Strike offset rules, lot sizes, moneyness thresholds.
+    * `config/scoring_rules.yaml` - Feature weights, indicator parameters, normalization limits, and regime overrides.
     * `.env` / `.env.example` - Optional PostgreSQL credentials and environment settings.
 * **CI/CD Pipeline:** Local standard PyTest suite (`python -m pytest`).
 
@@ -59,7 +58,7 @@ This document provides essential context for AI models interacting with this pro
 
 ## 7. Specific Instructions for AI Collaboration
 
-* **Config-Driven Architecture:** All scoring weights and normalization parameters MUST remain in `config/scoring_rules.yaml` and `config/strike_rules.yaml`. Do NOT hardcode scoring weights inside Python source code.
+* **Config-Driven Architecture:** All scoring weights and normalization parameters MUST remain in `config/scoring_rules.yaml`. Do NOT hardcode scoring weights inside Python source code. Strike selection and strategy mapping are implemented in `src/osse/engine/decision.py`.
 * **Normalization Separation:** Raw metrics must only be normalized inside `src/osse/engine/normalizer.py`. `scorer.py` must only consume normalized values (0–100).
 * **Data Sourcing:** All market data comes from sanctioned sources only — bundled internal datasets, `yfinance`, and `jugaad-data`. There is no broker API dependency and no web scraping. Do not reintroduce DhanHQ or browser/web-fetch collectors.
 * **Imports & Module Paths:** Ensure `src` is in the Python path when importing `osse` modules.

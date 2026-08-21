@@ -1,4 +1,4 @@
-# AGENTS.md
+# AGENT.md
 
 This file provides guidance to AI agents (including Kimi Code) when working with code in this repository.
 
@@ -37,7 +37,7 @@ Unidirectional pipeline — each stage feeds the next; there is no shared mutabl
 
 ## Key Invariants
 
-- **Scoring weights are config-driven.** All feature weights and normalization bounds live in `config/scoring_rules.yaml`; strike/lot rules in `config/strike_rules.yaml`. Change tuning there, not in code.
+- **Scoring weights are config-driven.** All feature weights and normalization bounds live in `config/scoring_rules.yaml`. Strike selection and strategy mapping live in `src/osse/engine/decision.py`. Change tuning in the YAML or decision logic, not by hardcoding weights elsewhere.
 - **Never mix raw and normalized values in the scorer.** Normalization happens only in `normalizer.py` per the `normalization:` mode declared in the YAML (`bounded`, `min_max`, etc.); `scorer.py` consumes only normalized values.
 - **Secrets come from env only** — PostgreSQL credentials via `os.environ.get` (`.env` loaded with dotenv). The engine performs no broker API calls and no web scraping, so no broker/scraper credentials exist.
 - Scripts in `scripts/` are throwaway research/backtest harnesses; the CSVs at repo root are their output artifacts, not source data.

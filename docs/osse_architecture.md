@@ -1,7 +1,7 @@
 # ORB Strength Score Engine (OSSE) Architecture
 
 ## Overview
-The OSSE is a Python-based quantitative decision engine that computes an Opening Range Breakout (ORB) Strength Score (0–100) for NIFTY, BANKNIFTY, and SENSEX. The engine acts as a statistical filter that sits between raw market data and trade execution, aiming to improve risk-adjusted returns and reduce false breakouts in options-selling strategies.
+The OSSE is a Python-based quantitative decision engine that computes an Opening Range Breakout (ORB) Strength Score (0–100) for **NIFTY 50**. The engine acts as a statistical filter that sits between raw market data and trade execution, aiming to improve risk-adjusted returns and reduce false breakouts in options-selling strategies.
 
 ## System Architecture Diagram
 

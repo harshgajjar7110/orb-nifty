@@ -18,12 +18,12 @@ The OSSE engine evaluates intraday 1-minute market structure against 13 statisti
 - **Config-Driven Weights:** All feature weights and normalization bounds live in `config/scoring_rules.yaml` — no hardcoded values in Python.
 
 ### Options Analytics
-- **Delta-Targeted Strike Selector (`strike_selector` logic in `decision.py`):** Selects option legs based on configurable delta targets (`config/strike_rules.yaml`).
+- **Strike Selection Logic (`decision.py`):** Option legs and strategy recommendations are built directly by the `DecisionEngine` using delta-targeted / moneyness heuristics with a synthetic Black-Scholes backdrop.
 - **Expiry Handling:** Weekly / Next-Weekly / Monthly expiry metadata resolved inline.
-- **Risk-Aware Recommendations:** Maps OSSE score + IV Rank + regime into explicit trade strategies and a synthetic Black-Scholes-based strike builder.
+- **Risk-Aware Recommendations:** Maps OSSE score + IV Rank + regime into explicit trade strategies.
 
 ### Risk Management
-- **Risk Manager (`risk_manager` rules in `config/strike_rules.yaml`):** Per-trade and daily capital risk limits and position sizing guidance.
+- Position sizing guidance and per-trade risk limits are encoded in `DecisionEngine` recommendations. Backtest metrics include Win Rate %, MFE, MAE, and Max Drawdown.
 
 ### Backtest Engine
 - **Multi-Day Swing Backtester:** Replays historical sessions using real OHLCV data. Measures Win Rate %, Avg MFE (Maximum Favorable Excursion), Avg MAE (Maximum Adverse Excursion), and MFE/MAE Ratio.
@@ -43,7 +43,7 @@ The OSSE engine evaluates intraday 1-minute market structure against 13 statisti
 
 OSSE sources all market data from **three sanctioned channels only** — there is no live broker feed and no web scraping:
 
-1. **Internal datasets (offline, authoritative).** Local files shipped with the repository — e.g. `data/nifty_1min_august_2026.parquet`, `data/nifty_15min.parquet`, and the root `NIFTY 50.csv`. These are used first, with no network required.
+1. **Internal datasets (offline, authoritative).** Local Parquet files shipped with the repository — e.g. `data/nifty_1min_august_2026.parquet` and `data/nifty_15min.parquet`. These are used first, with no network required.
 2. **Y Finance (`yfinance`).** The primary network source for 1-minute OHLCV, daily history, and India VIX.
 3. **jugaad-data.** A fallback source for Indian-equity / index daily history.
 
@@ -87,10 +87,8 @@ Data Sources
 - TA-Lib system library (see below)
 
 ### 2. Install TA-Lib (Windows)
-A pre-built Windows wheel is included in the repo:
-```bash
-pip install TA_Lib-0.4.28-cp311-cp311-win_amd64.whl
-```
+TA-Lib is a required dependency. On Windows you can install a pre-built wheel matching your Python version (e.g. `TA_Lib-0.4.28-cp311-cp311-win_amd64.whl`) or use `pip install TA-Lib` if a compatible binary is available.
+
 On Linux/macOS, install the C library first then `pip install TA-Lib`.
 
 ### 3. Clone & Install
@@ -226,20 +224,11 @@ Backtest results are saved to CSV files. Metrics include Win Rate %, MFE, MAE, M
 ## ⚙️ Configuration
 
 ### `config/scoring_rules.yaml`
-Controls feature weights (total = 120, normalised to 100%), normalization bounds, market regime weight overrides, and the score normalization split.
+Controls feature weights (total = 120, normalised to 100%), normalization bounds, and market regime weight overrides.
 
 Key sections:
 - `features` — per-feature `weight` and `normalization` bounds
-- `confluence_weights` (if present) — DEX wall, POC, VAH/VAL, and volume confirmation weights
 - `regimes` — per-regime feature weight overrides (`TRENDING`, `RANGING`, `GAP`)
-
-### `config/strike_rules.yaml`
-Controls strike selection per symbol and strategy.
-
-Key sections:
-- `symbols` — per-index `step_size`, `lot_size`, `default_otm_steps`
-- `delta_targets` — short/long leg delta bounds for credit spreads, debit spreads, straddles
-- `premium_targets` — premium % of spot bounds for credit spreads
 
 ---
 
@@ -250,18 +239,14 @@ orb-nifty/
 ├── .env.example                 # Credential template (Postgres only)
 ├── .gitignore
 ├── AGENT.md                     # Agent instructions
-├── base.md                      # Base documentation
 ├── README.md
 ├── requirements.txt
 ├── run_dashboard.py             # Dashboard launcher (auto-detects venv)
-├── run_unified_dashboard.py     # Launcher (points at the Streamlit dashboard)
 ├── config/
-│   ├── scoring_rules.yaml       # Feature weights & regime overrides
-│   └── strike_rules.yaml        # Strike selection rules & lot sizes
+│   └── scoring_rules.yaml       # Feature weights & regime overrides
 ├── data/                       # Internal datasets (Parquet) + local DB
 ├── docs/
-│   ├── osse_architecture.md
-│   └── PRD_DEX_VP_OSSE_v3_consistent.md
+│   └── osse_architecture.md
 ├── scripts/                     # Backtest / history-fetch harnesses
 │   ├── run_30d_backtest.py
 │   ├── run_1y_backtest.py
