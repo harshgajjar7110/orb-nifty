@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OSSE (ORB Strength Score Engine) is a quantitative decision engine that computes an Opening Range Breakout strength score (0–100) plus strategy recommendations for Indian indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) and NSE equities. It is a statistical confidence **filter** for option-selling and swing strategies — it deliberately does NOT place automated live trades.
+OSSE (ORB Strength Score Engine) is a quantitative decision engine that computes an Opening Range Breakout strength score (0–100) plus strategy recommendations for the **NIFTY 50** index. It is a statistical confidence **filter** for option-selling and swing strategies — it deliberately does NOT place automated live trades.
 
 ## Commands
 

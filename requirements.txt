@@ -10,7 +10,7 @@ pytest==8.2.2
 SQLAlchemy==2.0.31
 streamlit==1.36.0
 plotly==5.22.0
-jugaad-data>=0.30
+jugaad-data>=0.35
 
 
 APScheduler>=3.10.0

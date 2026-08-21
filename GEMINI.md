@@ -4,7 +4,7 @@ This document provides essential context for AI models interacting with this pro
 
 ## 1. Project Overview & Purpose
 
-* **Primary Goal:** The Opening Range Breakout Strength Score Engine (OSSE) is a quantitative decision and filtering engine for Indian market equity indices (NIFTY 50, BANKNIFTY, SENSEX, FINNIFTY) and equities. It calculates a statistical strength score (0–100) based on 15-minute ORB (09:15-09:30 AM), technical indicators (CPR, VWAP, EMA, RSI, ATR), IV Rank / VIX, and provides option strategy recommendations (Credit/Debit Spreads, Iron Condors, Straddles) along with strike selection rules.
+* **Primary Goal:** The Opening Range Breakout Strength Score Engine (OSSE) is a quantitative decision and filtering engine for the **NIFTY 50** index. It calculates a statistical strength score (0–100) based on 15-minute ORB (09:15-09:30 AM), technical indicators (CPR, VWAP, EMA, RSI, ATR), IV Rank / VIX, and provides option strategy recommendations (Credit/Debit Spreads, Iron Condors, Straddles) along with strike selection rules.
 * **Business Domain:** Algorithmic & Quantitative Financial Trading (Options Trading & Intraday/Swing Breakout Analysis for Indian Financial Markets).
 
 ## 2. Core Technologies & Stack

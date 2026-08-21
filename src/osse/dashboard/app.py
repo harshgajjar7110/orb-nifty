@@ -128,25 +128,6 @@ st.title("ORB Strength Score Engine (OSSE)")
 st.sidebar.header("Configuration")
 popular_symbols = [
     "^NSEI (NIFTY 50)",
-    "^NSEBANK (BANK NIFTY)",
-    "^BSESN (SENSEX)",
-    "NIFTY_FIN_SERVICE.NS (FINNIFTY)",
-    "RELIANCE.NS (Reliance Industries)",
-    "HDFCBANK.NS (HDFC Bank)",
-    "ICICIBANK.NS (ICICI Bank)",
-    "INFY.NS (Infosys)",
-    "TCS.NS (TCS)",
-    "KOTAKBANK.NS (Kotak Mahindra Bank)",
-    "LT.NS (Larsen & Toubro)",
-    "AXISBANK.NS (Axis Bank)",
-    "SBIN.NS (State Bank of India)",
-    "BHARTIARTL.NS (Bharti Airtel)",
-    "ITC.NS (ITC Limited)",
-    "TATAMOTORS.NS (Tata Motors)",
-    "TATASTEEL.NS (Tata Steel)",
-    "M&M.NS (Mahindra & Mahindra)",
-    "SUNPHARMA.NS (Sun Pharma)",
-    "MARUTI.NS (Maruti Suzuki)",
     "Custom Ticker..."
 ]
 
@@ -154,11 +135,11 @@ selected_option = st.sidebar.selectbox(
     "Ticker Symbol",
     options=popular_symbols,
     index=0,
-    help="Search or select a ticker symbol. Choose 'Custom Ticker...' to type any custom Yahoo Finance ticker."
+    help="NIFTY 50 is the supported index. Choose 'Custom Ticker...' to type any custom Yahoo Finance ticker for research."
 )
 
 if selected_option == "Custom Ticker...":
-    symbol = st.sidebar.text_input("Enter Custom Ticker (e.g. AAPL, TSLA)", value="^NSEI").strip()
+    symbol = st.sidebar.text_input("Enter Custom Ticker (e.g. ^NSEI, NIFTY)", value="^NSEI").strip()
 else:
     symbol = selected_option.split(" ")[0].strip()
 date = st.sidebar.date_input("Date", datetime.today() - timedelta(days=1))

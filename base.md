@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-OSSE is a quantitative decision engine that computes an Opening Range Breakout (ORB) strength score (0–100) and strategy recommendations for Indian indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) and NSE equities. It is a **statistical confidence filter**, not an automated trader — it never places live trades.
+OSSE is a quantitative decision engine that computes an Opening Range Breakout (ORB) strength score (0–100) and strategy recommendations for the **NIFTY 50** index. It is a **statistical confidence filter**, not an automated trader — it never places live trades.
 
 The engine evaluates intraday 1-minute market structure against 13 statistical features, higher-timeframe daily trends, Central Pivot Range (CPR), IV Rank, Delta Exposure (DEX), Gamma Exposure (GEX), and Volume Profile — outputting a unified score and actionable option strategy recommendations with delta-targeted strike selection.
 
@@ -197,11 +197,8 @@ python run_dashboard.py          # http://localhost:8501
 # FastAPI server
 PYTHONPATH=src python -m uvicorn osse.api.app:app --host 0.0.0.0 --port 8000
 
-# Live monitor (single poll)
-PYTHONPATH=src python -m osse.monitoring.scheduler --once --ignore-hours
-
-# Live monitor (background poll)
-PYTHONPATH=src python -m osse.monitoring.scheduler --symbols NIFTY,BANKNIFTY --interval 180
+# Delayed spot quote (polling CLI; keep interval >= 30s)
+PYTHONPATH=src python scripts/fetch_spot_price.py --symbol NIFTY --interval 180
 
 # Backtests
 PYTHONPATH=src python scripts/run_1y_backtest.py

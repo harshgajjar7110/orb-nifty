@@ -16,45 +16,38 @@ logger = logging.getLogger(__name__)
 _DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# NIFTY 50 is the only supported index.
+NIFTY_ALIASES = {"^NSEI", "NIFTY"}
+
 # Symbol -> candidate internal dataset files (checked in order, first hit wins).
 INTERNAL_DATASETS = {
     "^NSEI": ["nifty_1min_august_2026.parquet", "nifty_15min.parquet", os.path.join(_REPO_ROOT, "NIFTY 50.csv")],
     "NIFTY": ["nifty_1min_august_2026.parquet", "nifty_15min.parquet", os.path.join(_REPO_ROOT, "NIFTY 50.csv")],
-    "^NSEBANK": [],
-    "BANKNIFTY": [],
-}
-
-# yfinance symbols used as the primary network source for each supported ticker.
-YFINANCE_SYMBOLS = {
-    "^NSEI": "^NSEI",
-    "NIFTY": "^NSEI",
-    "^NSEBANK": "^NSEBANK",
-    "BANKNIFTY": "^NSEBANK",
-    "^BSESN": "^BSESN",
-    "SENSEX": "^BSESN",
-    "NIFTY_FIN_SERVICE.NS": "NIFTY_FIN_SERVICE.NS",
-    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
 }
 
 
 class DataCollector:
     """
     Responsible for sourcing 1-minute historical / intraday OHLCV and daily
-    context data.
+    context data for the NIFTY 50 index only.
 
     Data sourcing is restricted to the three supported channels:
 
     1. **Internal datasets** — local Parquet / CSV files shipped with the repo.
     2. **Y Finance (``yfinance``)** — the primary sanctioned network source.
     3. **jugaad-data** — fallback for Indian-equity / index daily history.
-
-    DhanHQ and any browser / web-fetch scrapers (WebBridge, Chrome DevTools,
-    DhanMCP) have been removed; this engine no longer depends on them.
     """
 
     @staticmethod
+    def is_supported_symbol(symbol: str) -> bool:
+        """Return True if ``symbol`` is a supported NIFTY 50 alias."""
+        return symbol.upper() in NIFTY_ALIASES
+
+    @staticmethod
     def _yfinance_symbol(symbol: str) -> str:
-        return YFINANCE_SYMBOLS.get(symbol, symbol)
+        if not DataCollector.is_supported_symbol(symbol):
+            raise ValueError(f"Unsupported symbol '{symbol}'. Only NIFTY 50 (^NSEI / NIFTY) is supported.")
+        return "^NSEI"
 
     # ------------------------------------------------------------------
     # Internal datasets
@@ -180,6 +173,76 @@ class DataCollector:
             return pd.DataFrame()
 
     @staticmethod
+    def _fetch_spot_yfinance(symbol: str) -> dict:
+        """Fetch the delayed spot quote for ``symbol`` using yfinance (~15-min delay).
+
+        Returns the canonical quote dict, or {} on any failure. Fields that
+        cannot be resolved (e.g. previous_close) are omitted rather than
+        invented.
+        """
+        try:
+            import yfinance as yf
+
+            yf_symbol = DataCollector._yfinance_symbol(symbol)
+            ticker = yf.Ticker(yf_symbol)
+
+            df = ticker.history(period="1d", interval="1m")
+            if df is None or df.empty:
+                logger.warning(f"yfinance returned empty dataframe for {yf_symbol} spot quote")
+                return {}
+
+            last_ts = pd.Timestamp(df.index[-1])
+            if last_ts.tz is None:
+                last_ts = last_ts.tz_localize("Asia/Kolkata")
+            else:
+                last_ts = last_ts.tz_convert("Asia/Kolkata")
+
+            price = float(df["Close"].iloc[-1])
+            quote = {
+                "symbol": yf_symbol,
+                "price": round(price, 2),
+                "open": round(float(df["Open"].iloc[0]), 2),
+                "high": round(float(df["High"].max()), 2),
+                "low": round(float(df["Low"].min()), 2),
+                "timestamp": last_ts.isoformat(),
+                "source": "yfinance",
+                "delayed": True,
+            }
+
+            # Resolve previous_close without inventing a value: fast_info first,
+            # then the prior day's Close from 5d of daily history.
+            previous_close = None
+            try:
+                fast_info = ticker.fast_info
+                try:
+                    previous_close = float(fast_info["previous_close"])
+                except Exception:
+                    previous_close = float(fast_info.previous_close)
+            except Exception:
+                previous_close = None
+
+            if previous_close is None or math.isnan(previous_close):
+                previous_close = None
+                try:
+                    daily_df = ticker.history(period="5d", interval="1d")
+                    if daily_df is not None and not daily_df.empty and len(daily_df) >= 2:
+                        previous_close = float(daily_df["Close"].iloc[-2])
+                except Exception:
+                    previous_close = None
+
+            if previous_close is not None:
+                change = price - previous_close
+                quote["previous_close"] = round(previous_close, 2)
+                quote["change"] = round(change, 2)
+                if previous_close != 0:
+                    quote["percent_change"] = round(change / previous_close * 100.0, 2)
+
+            return quote
+        except Exception as e:
+            logger.error(f"yfinance spot quote failed for {symbol}: {e}")
+            return {}
+
+    @staticmethod
     def _fetch_daily_context_yfinance(symbol: str, date: str) -> dict:
         """Fetch daily context using yfinance."""
         try:
@@ -216,7 +279,7 @@ class DataCollector:
             end_dt = datetime.strptime(date, "%Y-%m-%d")
             start_dt = end_dt - timedelta(days=45)
 
-            sym = symbol.replace(".NS", "").replace("^", "")
+            sym = "NIFTY 50"
             # Index series vs equity series handling.
             try:
                 df = index_history(
@@ -244,19 +307,80 @@ class DataCollector:
             logger.warning(f"jugaad daily context failed for {symbol}: {e}")
             return {}
 
+    @staticmethod
+    def _fetch_spot_jugaad(symbol: str) -> dict:
+        """Fetch the near-real-time NIFTY 50 spot quote using jugaad-data.
+
+        Returns the canonical quote dict, or {} when jugaad-data is not
+        installed or the NSE call fails (NSE occasionally returns 403 / blocks
+        aggressive polling).
+        """
+        try:
+            from jugaad_data.nse import NSELive
+        except ImportError:
+            logger.info("jugaad-data not installed; skipping jugaad spot fallback.")
+            return {}
+
+        try:
+            nifty = NSELive().live_index("NIFTY 50")
+            rows = (nifty or {}).get("data") or []
+            if not rows:
+                logger.warning("jugaad live_index returned no data for NIFTY 50")
+                return {}
+
+            row = rows[0]
+            price = float(row["lastPrice"])
+            quote = {
+                "symbol": DataCollector._yfinance_symbol(symbol),
+                "price": round(price, 2),
+                "open": round(float(row["open"]), 2),
+                "high": round(float(row["dayHigh"]), 2),
+                "low": round(float(row["dayLow"]), 2),
+                "source": "jugaad",
+                "delayed": True,
+            }
+
+            raw_ts = row.get("lastUpdateTime") or (nifty or {}).get("timestamp")
+            if raw_ts:
+                try:
+                    ts = pd.Timestamp(datetime.strptime(raw_ts, "%d-%b-%Y %H:%M:%S"))
+                    if ts.tz is None:
+                        ts = ts.tz_localize("Asia/Kolkata")
+                    else:
+                        ts = ts.tz_convert("Asia/Kolkata")
+                    quote["timestamp"] = ts.isoformat()
+                except Exception as e:
+                    logger.warning(f"Could not parse jugaad timestamp '{raw_ts}': {e}")
+
+            previous_close = row.get("previousClose")
+            if previous_close is not None:
+                previous_close = float(previous_close)
+                change = price - previous_close
+                quote["previous_close"] = round(previous_close, 2)
+                quote["change"] = round(change, 2)
+                if previous_close != 0:
+                    quote["percent_change"] = round(change / previous_close * 100.0, 2)
+
+            return quote
+        except Exception as e:
+            logger.warning(f"jugaad spot quote failed for {symbol}: {e}")
+            return {}
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     @staticmethod
     def fetch_data(symbol: str, start_date: str, end_date: str = None, interval: str = "1m") -> pd.DataFrame:
         """
-        Download 1-minute candles, preferring internal datasets, then Y Finance.
+        Download 1-minute NIFTY 50 candles, preferring internal datasets, then Y Finance.
 
         Sources (in order):
           1. Internal bundled datasets (offline, authoritative).
           2. yfinance (primary network source).
         """
-        df = pd.DataFrame()
+        if not DataCollector.is_supported_symbol(symbol):
+            logger.error(f"Unsupported symbol '{symbol}'. Only NIFTY 50 (^NSEI / NIFTY) is supported.")
+            return pd.DataFrame()
 
         # 1. Internal datasets (offline, no network required).
         df = DataCollector._load_internal_intraday(symbol, start_date, end_date or start_date, interval)
@@ -343,13 +467,17 @@ class DataCollector:
     @staticmethod
     def fetch_daily_context(symbol: str, date: str) -> dict:
         """
-        Fetch daily context (previous close, high, low, volume, CPR, VIX).
+        Fetch daily context (previous close, high, low, volume, CPR, VIX) for NIFTY 50.
 
         Sources (in order):
           1. Internal bundled datasets (offline).
           2. yfinance.
           3. jugaad-data (Indian market fallback).
         """
+        if not DataCollector.is_supported_symbol(symbol):
+            logger.error(f"Unsupported symbol '{symbol}'. Only NIFTY 50 (^NSEI / NIFTY) is supported.")
+            return {}
+
         context = {}
 
         # 1. Internal datasets — reuse the intraday loader for daily context when
@@ -367,3 +495,47 @@ class DataCollector:
             context = DataCollector._fetch_daily_context_jugaad(symbol, date)
 
         return context
+
+    @staticmethod
+    def fetch_spot_quote(symbol: str = "^NSEI") -> dict:
+        """
+        Fetch the delayed NIFTY 50 spot price.
+
+        Sources (in order):
+          1. yfinance (``^NSEI``, ~15-minute Yahoo delay).
+          2. jugaad-data ``NSELive`` (near-real-time NSE index feed).
+
+        Returns a canonical quote dict::
+
+            {
+              "symbol": str,            # "^NSEI"
+              "price": float,
+              "change": float,          # price - previous_close (omitted if unknown)
+              "percent_change": float,  # omitted if previous_close unknown
+              "open": float, "high": float, "low": float,
+              "previous_close": float,  # omitted when unresolvable
+              "timestamp": str,         # ISO-8601, Asia/Kolkata
+              "source": str,            # "yfinance" | "jugaad"
+              "delayed": True,
+            }
+
+        Returns {} when both sources fail or the symbol is unsupported.
+        """
+        if not DataCollector.is_supported_symbol(symbol):
+            logger.error(f"Unsupported symbol '{symbol}'. Only NIFTY 50 (^NSEI / NIFTY) is supported.")
+            return {}
+
+        logger.info(f"Fetching spot quote via yfinance for {symbol}")
+        quote = DataCollector._fetch_spot_yfinance(symbol)
+        if quote:
+            logger.info(f"Spot quote for {symbol} fetched via yfinance")
+            return quote
+
+        logger.info(f"yfinance spot quote unavailable; falling back to jugaad-data for {symbol}")
+        quote = DataCollector._fetch_spot_jugaad(symbol)
+        if quote:
+            logger.info(f"Spot quote for {symbol} fetched via jugaad-data")
+            return quote
+
+        logger.error(f"Both quote sources failed for {symbol}")
+        return {}

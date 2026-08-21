@@ -4,7 +4,7 @@ This file provides guidance to AI agents (including Kimi Code) when working with
 
 ## Project Overview
 
-OSSE (ORB Strength Score Engine) is a quantitative decision engine that computes an Opening Range Breakout strength score (0–100) plus strategy recommendations for Indian indices (NIFTY, BANKNIFTY, SENSEX, FINNIFTY) and NSE equities. It is a statistical confidence **filter** for option-selling and swing strategies — it deliberately does NOT place automated live trades.
+OSSE (ORB Strength Score Engine) is a quantitative decision engine that computes an Opening Range Breakout strength score (0–100) plus strategy recommendations for the **NIFTY 50** index. It is a statistical confidence **filter** for option-selling and swing strategies — it deliberately does NOT place automated live trades.
 
 ## Commands
 
@@ -30,7 +30,7 @@ Note: TA-Lib on Windows installs from the checked-in wheel `TA_Lib-0.4.28-cp311-
 
 Unidirectional pipeline — each stage feeds the next; there is no shared mutable state between stages:
 
-1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV, India VIX (`^INDIAVIX`), and daily CPR context from three sanctioned sources — bundled internal datasets (offline), `yfinance`, and `jugaad-data`. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
+1. **Data** (`src/osse/data/`): `collector.py` fetches 1-min OHLCV for **NIFTY 50**, India VIX (`^INDIAVIX`), and daily CPR context from three sanctioned sources — bundled internal datasets (offline), `yfinance`, and `jugaad-data`. `db.py` persists scores/features to Parquet under `data/`; PostgreSQL is optional (`scripts/init_osse_db.sql`).
 2. **Features** (`src/osse/features/`): `indicators.py` (TA-Lib: EMA 20/50/200, ATR, VWAP, RSI, ADX, BBands) → `orb_builder.py` (isolates the 09:15–09:30 window: ORB high/low, width, candle efficiency) → `engineering.py` (rolling stats, IV Rank/Percentile from 1y VIX, higher-timeframe alignment vs daily 20 EMA, regime detection).
 3. **Engine** (`src/osse/engine/`): `normalizer.py` scales raw features → `scorer.py` applies weighted sum → `decision.py` maps score + IV Rank + regime to a strategy (credit spread, debit spread, iron condor, straddle, or NO TRADE).
 4. **Outputs**: `api/app.py` (FastAPI, `POST /api/v1/score`), `dashboard/app.py` (Streamlit), `backtest/` (multi-day swing simulation with Win Rate, MFE/MAE metrics).

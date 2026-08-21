@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, field_validator, AfterValidator
+from typing import List, Optional, Dict, Any, Annotated
 import time
 import logging
 import asyncio
@@ -17,8 +17,15 @@ from osse.engine.decision import DecisionEngine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ORB Strength Score Engine", version="1.0")
+app = FastAPI(title="ORB Strength Score Engine (NIFTY 50)", version="1.0")
 scorer = ScoringEngine()
+
+def validate_nifty_symbol_value(v: str) -> str:
+    if not DataCollector.is_supported_symbol(v):
+        raise ValueError("Only NIFTY 50 aliases (^NSEI / NIFTY) are supported")
+    return v
+
+NiftySymbol = Annotated[str, AfterValidator(validate_nifty_symbol_value)]
 
 class ScoreRequest(BaseModel):
     symbol: str
@@ -26,6 +33,11 @@ class ScoreRequest(BaseModel):
     spot_price: float = None
     vix: float = 15.0
     include_explanation: bool = False
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_nifty_symbol(cls, v: str) -> str:
+        return validate_nifty_symbol_value(v)
 
 class ScoreResponse(BaseModel):
     score: float
@@ -36,6 +48,19 @@ class ScoreResponse(BaseModel):
     pros: List[str] = []
     cons: List[str] = []
     ai_explanation: Optional[str] = ""
+
+class QuoteResponse(BaseModel):
+    symbol: str
+    price: float
+    change: Optional[float] = None
+    percent_change: Optional[float] = None
+    open: float
+    high: float
+    low: float
+    previous_close: Optional[float] = None
+    timestamp: Optional[str] = None
+    source: str
+    delayed: bool = True
 
 @app.post("/api/v1/score", response_model=ScoreResponse)
 async def generate_score(request: ScoreRequest):
@@ -75,7 +100,7 @@ async def generate_score(request: ScoreRequest):
         last_spot = request.spot_price
         if not last_spot:
             try:
-                last_spot = float(intraday_df['close'].iloc[-1])
+                last_spot = float(intraday_df['Close'].iloc[-1])
             except Exception:
                 last_spot = 24500.0
 
@@ -157,6 +182,23 @@ async def generate_score(request: ScoreRequest):
     except Exception as e:
         logger.exception("Error processing score request")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/v1/quote", response_model=QuoteResponse)
+async def get_quote(symbol: NiftySymbol = "^NSEI"):
+    """Delayed NIFTY 50 spot quote (yfinance primary, jugaad-data fallback)."""
+    logger.info(f"Received quote request for {symbol}")
+
+    try:
+        quote = await asyncio.to_thread(DataCollector.fetch_spot_quote, symbol)
+    except Exception:
+        logger.exception("Error fetching spot quote")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    if not quote:
+        raise HTTPException(status_code=503, detail="Both quote sources failed")
+
+    return QuoteResponse(**quote)
 
 
 
