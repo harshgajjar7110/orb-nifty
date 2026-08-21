@@ -437,7 +437,6 @@ if mode == "Daily Analysis":
                                     exp_date_val = today_str
 
                                 last_close = float(intraday_df['Close'].iloc[-1])
-                                direction = "UP" if last_close >= orb_stats['orb_high'] else "DOWN" if last_close <= orb_stats['orb_low'] else ("UP" if trend_arrow == "🔼" else "DOWN")
 
                                 # Strike selection via the consolidated DecisionEngine.
                                 from osse.engine.decision import DecisionEngine
@@ -456,14 +455,13 @@ if mode == "Daily Analysis":
 
                                 # Calculate strike recommendation using DecisionEngine path
                                 res = decision_engine.get_decision(
-                                    score=78.0,  # placeholder; should come from scoring engine
-                                    regime="TRENDING",
-                                    iv_rank=55.0,
+                                    score=score,
+                                    regime=regime,
+                                    iv_rank=float(iv_rank),
                                     spot_price=last_close,
-                                    symbol=symbol,
-                                    variant=strike_variant,
-                                    direction=direction,
-                                    vix=daily_context.get('vix', 15.0)
+                                    option_chain=opt_chain,
+                                    daily_context=daily_context,
+                                    symbol=symbol
                                 )
 
                                 if "strike_recommendation" in res:
@@ -473,6 +471,8 @@ if mode == "Daily Analysis":
                                     short_strike = round(last_close / 50) * 50
                                     strike_rec = {
                                         "variant_used": strike_variant,
+                                        "expiry_formatted": exp_date_val,
+                                        "dte_days": exp_dte,
                                         "legs": [
                                             {"action": "SELL", "option_type": "PE", "strike": float(short_strike - 50), "ltp": 2.5, "delta": -0.2, "theta": -0.05, "gamma": 0.0, "vega": 10.5, "oi": 10000, "security_id": 40000, "source": "synthetic_bs_engine"},
                                             {"action": "BUY", "option_type": "PE", "strike": float(short_strike - 150), "ltp": 1.0, "delta": -0.08, "theta": -0.02, "gamma": 0.0, "vega": 5.0, "oi": 5000, "security_id": 40001, "source": "synthetic_bs_engine"}

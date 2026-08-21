@@ -124,26 +124,13 @@ async def generate_score(request: ScoreRequest):
             except Exception:
                 pass
 
-        vix_val = 15.0
-        if request.vix:
-            try:
-                vix_val = float(request.vix)
-            except Exception:
-                pass
-        elif isinstance(daily_context, dict) and 'vix' in daily_context:
-            try:
-                vix_val = float(daily_context['vix'])
-            except Exception:
-                pass
-
         decision = DecisionEngine.get_decision(
             score=final_score,
             regime=regime,
             iv_rank=iv_rank,
             spot_price=last_spot,
             daily_context=daily_context if isinstance(daily_context, dict) else {},
-            symbol=request.symbol,
-            vix=vix_val
+            symbol=request.symbol
         )
         
         pros, cons = DecisionEngine.generate_pros_cons(
